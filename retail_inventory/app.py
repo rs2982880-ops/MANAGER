@@ -132,6 +132,24 @@ html, body, [class*="css"] { font-family: 'Inter', sans-serif; }
     background: linear-gradient(90deg, transparent, rgba(255,255,255,0.08), transparent);
     margin: 12px 0;
 }
+
+/* --- Class manager pills --- */
+.class-pill-wrap {
+    display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px;
+}
+
+/* --- Sidebar text input tight layout --- */
+[data-testid="stSidebar"] .stTextInput input {
+    background:#1e1e2e !important;
+    border: 1px solid rgba(255,255,255,0.1) !important;
+    border-radius: 8px !important;
+    color: #e0e0ff !important;
+    font-size: .82rem !important;
+}
+[data-testid="stSidebar"] .stTextInput input:focus {
+    border-color: #667eea !important;
+    box-shadow: 0 0 0 2px rgba(102,126,234,.25) !important;
+}
 </style>
 """, unsafe_allow_html=True)
 
@@ -158,6 +176,9 @@ _DEFAULTS = {
     "last_recs": [],
     "snapshot_count": 0,
     "demo_step": 0,
+    # Class manager
+    "active_classes": None,        # None → use detector defaults
+    "custom_classes": set(),        # user-typed class names
 }
 for k, v in _DEFAULTS.items():
     if k not in st.session_state:
@@ -251,21 +272,103 @@ except Exception as exc:
     st.error(f"❌ Failed to load YOLO model: {exc}")
     st.stop()
 
-# --- Class allowlist (sidebar, after detector loads) ---
+# ======================================================================
+# Class Manager (after detector loads so we know what the model supports)
+# ======================================================================
 with st.sidebar:
     st.markdown("---")
-    st.markdown("## 🏷️ Class Filter")
+    st.markdown("## 🏷️ Tracked Classes")
+    st.caption("Choose which product classes are tracked by the system")
+
+    # -- Available classes from the YOLO model (base list) --
     available = detector.get_class_list()
-    selected  = st.multiselect(
-        "Allowed classes",
-        options=available,
-        default=available,
-        help="Only keep detections matching these classes",
-    )
-    if set(selected) != set(available):
-        detector.set_allowed_classes(set(selected))
+
+    # -- Merge in user-added custom class names --
+    all_options = sorted(set(available) | st.session_state.custom_classes)
+
+    # -- Default selection: all_options (if no previous choice) --
+    if st.session_state.active_classes is None:
+        init_sel = all_options
     else:
-        detector.set_allowed_classes(None)       # use defaults
+        # Keep only classes that still exist in the combined list
+        init_sel = sorted(
+            st.session_state.active_classes & set(all_options)
+        )
+
+    # ---- Multiselect: pick from model + custom classes ----
+    selected = st.multiselect(
+        "Active classes",
+        options=all_options,
+        default=init_sel,
+        help="Tick/untick to enable or disable a class",
+        key="class_multiselect",
+    )
+    st.session_state.active_classes = set(selected)
+
+    # ---- Add a brand-new custom class by name ----
+    st.markdown("**➕ Add custom class**")
+    col_inp, col_btn = st.columns([3, 1])
+    new_cls = col_inp.text_input(
+        "✉️ Class name",
+        placeholder="e.g. shampoo",
+        label_visibility="collapsed",
+        key="new_class_input",
+    ).strip().lower()
+    if col_btn.button("➕ Add", use_container_width=True):
+        if new_cls and new_cls not in all_options:
+            st.session_state.custom_classes.add(new_cls)
+            st.session_state.active_classes.add(new_cls)
+            st.toast(f"✅ '{new_cls}' added to tracked classes", icon="🏷️")
+            st.rerun()
+        elif new_cls in all_options:
+            st.warning(f"'{new_cls}' is already in the list.")
+        else:
+            st.warning("Please enter a class name.")
+
+    # ---- Remove individual classes ----
+    if st.session_state.active_classes:
+        st.markdown("**❌ Remove a class**")
+        remove_cls = st.selectbox(
+            "Select to remove",
+            options=sorted(st.session_state.active_classes),
+            index=None,
+            placeholder="Choose class…",
+            label_visibility="collapsed",
+            key="remove_class_select",
+        )
+        if st.button("🗑️ Remove", use_container_width=True):
+            if remove_cls:
+                st.session_state.active_classes.discard(remove_cls)
+                st.session_state.custom_classes.discard(remove_cls)  # also from custom
+                st.toast(f"🗑️ '{remove_cls}' removed", icon="❌")
+                st.rerun()
+
+    # ---- Active class pills display ----
+    if st.session_state.active_classes:
+        pill_colors = [
+            "#667eea", "#764ba2", "#11998e", "#f7971e",
+            "#ff416c", "#38ef7d", "#6366f1", "#f59e0b",
+        ]
+        pills_html = "".join(
+            f"<span style='background:{pill_colors[i % len(pill_colors)]};color:#fff;"
+            f"padding:3px 10px;border-radius:20px;font-size:.75rem;"
+            f"font-weight:600;margin:2px;display:inline-block;'>{cls}</span>"
+            for i, cls in enumerate(sorted(st.session_state.active_classes))
+        )
+        st.markdown(
+            f"<div style='margin-top:8px;line-height:2.2;'>{pills_html}</div>",
+            unsafe_allow_html=True,
+        )
+        st.caption(f"{len(st.session_state.active_classes)} class(es) tracked")
+    else:
+        st.warning("⚠️ No classes selected — nothing will be detected.")
+
+    # ---- Apply to detector ----
+    active = st.session_state.active_classes
+    if active is not None and set(active) != set(available):
+        detector.set_allowed_classes(set(active))
+    else:
+        detector.set_allowed_classes(None)   # revert to model defaults
 
 # ======================================================================
 # Process one frame  (real or synthetic)

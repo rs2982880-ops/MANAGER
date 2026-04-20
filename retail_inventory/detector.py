@@ -1,7 +1,7 @@
 """
 YOLO-based product detection module.
 =====================================
-Loads a YOLOv8 model (custom best.pt preferred, pretrained yolov8n.pt fallback)
+Loads a YOLOv8 model (custom best.pt preferred, pretrained yolov8l.pt fallback)
 and exposes simple detect / draw helpers.
 
 Key upgrades
@@ -66,7 +66,7 @@ class ProductDetector:
         """
         Args:
             model_path:      Path to a custom YOLO model.
-                             Falls back to pretrained yolov8n.pt if not found.
+                             Falls back to pretrained yolov8l.pt if not found.
             confidence:      Minimum detection confidence threshold.
             allowed_classes: If provided, only these class names pass through.
                              Overrides the default RETAIL_CLASSES filter.
@@ -116,8 +116,8 @@ class ProductDetector:
             self.model = YOLO(model_path)
             self.using_custom_model = True
         else:
-            print("[detector] Custom model not found — loading pretrained yolov8n.pt")
-            self.model = YOLO("yolov8n.pt")
+            print("[detector] Custom model not found — loading pretrained yolov8l.pt")
+            self.model = YOLO("yolov8l.pt")
             self.using_custom_model = False
 
         self.class_names = self.model.names  # {int: str}
