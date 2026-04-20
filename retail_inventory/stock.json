@@ -1,19 +1,12 @@
 {
-  "timestamp": "2026-04-20T17:29:39.885454",
-  "stock": {
-    "bottle": 2
-  },
+  "timestamp": "2026-04-20T20:30:32.472154",
+  "stock": {},
   "grid": [
     [
       "empty",
       "empty",
       "empty",
       "empty",
-      "empty",
-      "empty",
-      "empty",
-      "empty",
-      "empty",
       "empty"
     ],
     [
@@ -21,67 +14,9 @@
       "empty",
       "empty",
       "empty",
-      "empty",
-      "empty",
-      "empty",
-      "empty",
-      "empty",
       "empty"
     ],
     [
-      "empty",
-      "empty",
-      "empty",
-      "empty",
-      "empty",
-      "empty",
-      "empty",
-      "empty",
-      "empty",
-      "empty"
-    ],
-    [
-      "empty",
-      "empty",
-      "bottle",
-      "empty",
-      "bottle",
-      "empty",
-      "empty",
-      "empty",
-      "empty",
-      "empty"
-    ],
-    [
-      "empty",
-      "empty",
-      "empty",
-      "empty",
-      "empty",
-      "empty",
-      "empty",
-      "empty",
-      "empty",
-      "empty"
-    ],
-    [
-      "empty",
-      "empty",
-      "empty",
-      "empty",
-      "empty",
-      "empty",
-      "empty",
-      "empty",
-      "empty",
-      "empty"
-    ],
-    [
-      "empty",
-      "empty",
-      "empty",
-      "empty",
-      "empty",
       "empty",
       "empty",
       "empty",

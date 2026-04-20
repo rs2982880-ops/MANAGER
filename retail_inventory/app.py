@@ -1,14 +1,17 @@
 """
-AI-Powered Retail Inventory Dashboard  (Grid + Snapshot edition)
-=================================================================
+AI-Powered Retail Inventory Dashboard  (Grid + Snapshot edition v2)
+====================================================================
 Streamlit GUI with:
-  • Shelf region configuration
+  • Shelf region configuration  (sidebar)
+  • Class allowlist filter      (sidebar — pick which YOLO classes matter)
   • Grid overlay on camera feed
-  • Visual grid map
+  • Visual grid map  (per-product colours)
   • Snapshot-based sales detection (position-aware)
   • Occlusion handling (majority voting + sudden-drop guard)
   • Restocking alerts & shelf recommendations
+  • Stock trend line chart (Plotly)
   • Emptiness heatmap
+  • Demo / simulation mode (no camera needed)
 
 Run:  streamlit run app.py
 """
@@ -16,6 +19,8 @@ Run:  streamlit run app.py
 import streamlit as st
 import cv2
 import json
+import math
+import random
 import numpy as np
 import pandas as pd
 import time
@@ -23,7 +28,7 @@ from datetime import datetime
 
 from detector import ProductDetector
 from grid_mapper import ShelfRegion, GridMapper
-from tracker import SnapshotTracker
+from tracker import SnapshotTracker, detect_sales, detect_movement
 from logic import RestockingEngine
 from database import Database
 from utils import (
@@ -44,51 +49,89 @@ st.set_page_config(
 )
 
 # ======================================================================
-# CSS — dark premium theme
+# CSS — premium dark theme with glassmorphism & micro-animations
 # ======================================================================
 st.markdown("""
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
 html, body, [class*="css"] { font-family: 'Inter', sans-serif; }
 
+/* --- Metric cards --- */
 [data-testid="stMetric"] {
     background: linear-gradient(135deg, #1e1e2e 0%, #2a2a3e 100%);
     border: 1px solid rgba(255,255,255,0.06);
-    border-radius: 12px; padding: 14px 18px;
-    box-shadow: 0 4px 20px rgba(0,0,0,0.25);
+    border-radius: 14px; padding: 16px 20px;
+    box-shadow: 0 4px 24px rgba(0,0,0,0.30);
+    transition: transform .2s, box-shadow .2s;
+}
+[data-testid="stMetric"]:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 8px 32px rgba(102,126,234,0.25);
 }
 [data-testid="stMetricLabel"] { font-size: .82rem !important; color: #a0a0c0 !important; }
 [data-testid="stMetricValue"] { font-weight: 700 !important; font-size: 1.5rem !important; }
 
+/* --- Alert cards --- */
 .alert-critical {
     background: linear-gradient(135deg,#ff416c,#ff4b2b); color:#fff;
-    padding:12px 16px; border-radius:10px; margin-bottom:8px;
-    font-weight:600; box-shadow:0 2px 12px rgba(255,65,108,.35);
+    padding:12px 16px; border-radius:12px; margin-bottom:8px;
+    font-weight:600; box-shadow:0 4px 16px rgba(255,65,108,.35);
+    animation: pulse-alert 2s infinite;
+}
+@keyframes pulse-alert {
+    0%,100% { box-shadow:0 4px 16px rgba(255,65,108,.35); }
+    50%     { box-shadow:0 4px 28px rgba(255,65,108,.55); }
 }
 .alert-warning {
     background: linear-gradient(135deg,#f7971e,#ffd200); color:#1a1a2e;
-    padding:12px 16px; border-radius:10px; margin-bottom:8px;
-    font-weight:600; box-shadow:0 2px 12px rgba(247,151,30,.30);
+    padding:12px 16px; border-radius:12px; margin-bottom:8px;
+    font-weight:600; box-shadow:0 4px 16px rgba(247,151,30,.30);
 }
 .rec-card {
     background: linear-gradient(135deg,#11998e,#38ef7d); color:#1a1a2e;
-    padding:12px 16px; border-radius:10px; margin-bottom:8px;
-    font-weight:600; box-shadow:0 2px 12px rgba(17,153,142,.30);
+    padding:12px 16px; border-radius:12px; margin-bottom:8px;
+    font-weight:600; box-shadow:0 4px 16px rgba(17,153,142,.30);
 }
 .info-card {
     background: linear-gradient(135deg,#667eea,#764ba2); color:#fff;
-    padding:12px 16px; border-radius:10px; margin-bottom:8px;
-    font-weight:500; box-shadow:0 2px 12px rgba(102,126,234,.30);
+    padding:12px 16px; border-radius:12px; margin-bottom:8px;
+    font-weight:500; box-shadow:0 4px 16px rgba(102,126,234,.30);
 }
+
+/* --- Dashboard header --- */
 .dash-header { text-align:center; padding:8px 0 18px 0; }
 .dash-header h1 {
-    font-size:1.9rem;
+    font-size:2rem;
     background:linear-gradient(90deg,#667eea,#764ba2,#38ef7d);
     -webkit-background-clip:text; -webkit-text-fill-color:transparent;
     font-weight:800; margin-bottom:2px;
 }
 .dash-header p { color:#888; font-size:.85rem; }
-[data-testid="stSidebar"] { background:linear-gradient(180deg,#0f0f1a 0%,#1a1a2e 100%); }
+
+/* --- Sidebar --- */
+[data-testid="stSidebar"] {
+    background:linear-gradient(180deg,#0f0f1a 0%,#1a1a2e 100%);
+}
+
+/* --- Demo banner --- */
+.demo-banner {
+    background: linear-gradient(135deg,#6366f1,#8b5cf6);
+    color: #fff; padding:10px 16px; border-radius:10px;
+    margin-bottom:12px; font-weight:600; text-align:center;
+    box-shadow:0 2px 12px rgba(99,102,241,.35);
+    animation: demo-glow 3s ease-in-out infinite;
+}
+@keyframes demo-glow {
+    0%,100% { box-shadow:0 2px 12px rgba(99,102,241,.35); }
+    50%     { box-shadow:0 2px 24px rgba(139,92,246,.55); }
+}
+
+/* --- Section divider --- */
+.section-divider {
+    border: none; height:1px;
+    background: linear-gradient(90deg, transparent, rgba(255,255,255,0.08), transparent);
+    margin: 12px 0;
+}
 </style>
 """, unsafe_allow_html=True)
 
@@ -106,7 +149,7 @@ st.markdown("""
 # Session-state defaults
 # ======================================================================
 _DEFAULTS = {
-    "tracker": None,       # will init after sidebar
+    "tracker": None,
     "engine": None,
     "db": Database(),
     "frame_count": 0,
@@ -114,6 +157,7 @@ _DEFAULTS = {
     "last_alerts": [],
     "last_recs": [],
     "snapshot_count": 0,
+    "demo_step": 0,
 }
 for k, v in _DEFAULTS.items():
     if k not in st.session_state:
@@ -129,20 +173,22 @@ with st.sidebar:
     st.markdown("---")
     st.markdown("## 📐 Shelf Region")
     st.caption("Set the pixel coordinates of the shelf bounding box")
-    shelf_x1 = st.number_input("x_min", 0, 1920, 50, 10)
-    shelf_y1 = st.number_input("y_min", 0, 1080, 30, 10)
+    shelf_x1 = st.number_input("x_min", 0, 1920, 50,  10)
+    shelf_y1 = st.number_input("y_min", 0, 1080, 30,  10)
     shelf_x2 = st.number_input("x_max", 0, 1920, 590, 10)
     shelf_y2 = st.number_input("y_max", 0, 1080, 440, 10)
 
     st.markdown("---")
     st.markdown("## 🔲 Grid Size")
-    grid_rows = st.slider("Rows", 1, 8, 3)
+    grid_rows = st.slider("Rows",    1, 8,  3)
     grid_cols = st.slider("Columns", 1, 10, 5)
 
     st.markdown("---")
     st.markdown("## ⏱️ Snapshot")
-    snap_interval = st.slider("Interval (seconds)", 5, 600, 30, 5,
-                               help="Seconds between auto-snapshots")
+    snap_interval = st.slider(
+        "Interval (seconds)", 5, 600, 30, 5,
+        help="Seconds between auto-snapshots",
+    )
     buffer_size = st.slider("Buffer frames (occlusion)", 3, 15, 5)
 
     st.markdown("---")
@@ -151,27 +197,31 @@ with st.sidebar:
 
     st.markdown("---")
     st.markdown("## 📷 Input")
-    source = st.radio("Source", ["🎥 Webcam", "🖼️ Upload image"],
-                       label_visibility="collapsed")
+    source = st.radio(
+        "Source",
+        ["🎥 Webcam", "🖼️ Upload image", "🧪 Demo simulation"],
+        label_visibility="collapsed",
+    )
 
     st.markdown("---")
     if st.button("🗑️ Reset all data"):
         if st.session_state.tracker:
             st.session_state.tracker.reset()
-        st.session_state.frame_count = 0
-        st.session_state.log_lines = []
-        st.session_state.last_alerts = []
-        st.session_state.last_recs = []
+        st.session_state.frame_count  = 0
+        st.session_state.log_lines    = []
+        st.session_state.last_alerts  = []
+        st.session_state.last_recs    = []
         st.session_state.snapshot_count = 0
+        st.session_state.demo_step    = 0
         st.toast("Tracking data cleared!", icon="🗑️")
 
 # ======================================================================
 # Build objects from sidebar values
 # ======================================================================
-shelf = ShelfRegion(shelf_x1, shelf_y1, shelf_x2, shelf_y2)
+shelf       = ShelfRegion(shelf_x1, shelf_y1, shelf_x2, shelf_y2)
 grid_mapper = GridMapper(shelf, grid_rows, grid_cols)
 
-# Rebuild tracker when settings change (keyed on interval + buffer)
+# Rebuild tracker when settings change
 tracker_key = f"{snap_interval}_{buffer_size}"
 if (st.session_state.tracker is None
         or getattr(st.session_state, "_tracker_key", None) != tracker_key):
@@ -182,25 +232,43 @@ if (st.session_state.tracker is None
     st.session_state._tracker_key = tracker_key
 
 tracker: SnapshotTracker = st.session_state.tracker
-
-engine = RestockingEngine(stock_threshold=stock_threshold)
+engine  = RestockingEngine(stock_threshold=stock_threshold)
 db: Database = st.session_state.db
 
 # ======================================================================
-# Load detector (cached)
+# Load detector  (model cached once, confidence updated per-run)
 # ======================================================================
 @st.cache_resource
-def load_detector(conf: float):
-    return ProductDetector(confidence=conf)
+def load_detector():
+    """Load YOLO model once.  Confidence is updated separately."""
+    return ProductDetector(confidence=0.45)
 
 try:
-    detector = load_detector(confidence)
+    detector = load_detector()
+    # Apply current sidebar confidence (doesn't reload model)
+    detector.set_confidence(confidence)
 except Exception as exc:
     st.error(f"❌ Failed to load YOLO model: {exc}")
     st.stop()
 
+# --- Class allowlist (sidebar, after detector loads) ---
+with st.sidebar:
+    st.markdown("---")
+    st.markdown("## 🏷️ Class Filter")
+    available = detector.get_class_list()
+    selected  = st.multiselect(
+        "Allowed classes",
+        options=available,
+        default=available,
+        help="Only keep detections matching these classes",
+    )
+    if set(selected) != set(available):
+        detector.set_allowed_classes(set(selected))
+    else:
+        detector.set_allowed_classes(None)       # use defaults
+
 # ======================================================================
-# Process one frame
+# Process one frame  (real or synthetic)
 # ======================================================================
 def process_frame(frame: np.ndarray):
     """Detect → filter to shelf → map to grid → feed tracker."""
@@ -225,7 +293,7 @@ def process_frame(frame: np.ndarray):
             st.session_state.snapshot_count += 1
             stock = snap.item_counts
             db.save_grid_snapshot(snap.grid_map, stock)
-            sales = tracker.get_latest_sales()
+            sales    = tracker.get_latest_sales()
             restocks = tracker.get_latest_restocks()
             if sales:
                 db.log_sales(sales)
@@ -237,25 +305,25 @@ def process_frame(frame: np.ndarray):
     annotated = grid_mapper.draw_grid_overlay(annotated, grid_map)
 
     # 7. Current data
-    stock = tracker.get_current_stock()
-    rate = tracker.get_sales_rate()
+    stock    = tracker.get_current_stock()
+    rate     = tracker.get_sales_rate()
     grid_now = tracker.get_live_grid() or grid_map
 
-    alerts = engine.check_alerts(stock, rate, grid_now)
+    alerts   = engine.check_alerts(stock, rate, grid_now)
     co_grids = [s.grid_map for s in tracker.snapshot_history] if tracker.snapshot_history else []
-    co_occ = engine.analyse_co_occurrence(co_grids)
-    recs = engine.get_recommendations(stock, rate, co_occ)
+    co_occ   = engine.analyse_co_occurrence(co_grids)
+    recs     = engine.get_recommendations(stock, rate, co_occ)
 
     for a in alerts:
         db.log_alert(a["item"], a["severity"], a["action"])
 
     st.session_state.last_alerts = alerts
-    st.session_state.last_recs = recs
+    st.session_state.last_recs   = recs
     st.session_state.frame_count += 1
 
     # Log
-    ts = datetime.now().strftime("%H:%M:%S")
-    occ_tag = "" if accepted else " [OCCLUDED—skipped]"
+    ts       = datetime.now().strftime("%H:%M:%S")
+    occ_tag  = "" if accepted else " [OCCLUDED—skipped]"
     snap_tag = " 📸 SNAPSHOT" if snapshot_taken else ""
     st.session_state.log_lines.append(
         f"[{ts}] Frame #{st.session_state.frame_count} — "
@@ -266,24 +334,108 @@ def process_frame(frame: np.ndarray):
 
     return annotated, grid_map, stock, rate, alerts, recs
 
+
+# ======================================================================
+# Demo simulation  (no camera / image required)
+# ======================================================================
+# Product pool for demo grids
+_DEMO_PRODUCTS = ["bottle", "cup", "apple", "banana", "book", "remote"]
+
+
+def _random_grid(rows: int, cols: int, fill_pct: float = 0.70) -> list:
+    """Generate a random shelf grid for demo mode."""
+    grid = [["empty"] * cols for _ in range(rows)]
+    for r in range(rows):
+        for c in range(cols):
+            if random.random() < fill_pct:
+                grid[r][c] = random.choice(_DEMO_PRODUCTS)
+    return grid
+
+
+def _simulate_sales(grid: list, remove_n: int = 2) -> list:
+    """Remove *remove_n* random items from the grid to simulate sales."""
+    import copy
+    g = copy.deepcopy(grid)
+    occupied = [(r, c) for r in range(len(g)) for c in range(len(g[0])) if g[r][c] != "empty"]
+    if occupied:
+        for rc in random.sample(occupied, min(remove_n, len(occupied))):
+            g[rc[0]][rc[1]] = "empty"
+    return g
+
+
+def run_demo_step():
+    """Run one demo iteration — feeds a synthetic grid into the tracker."""
+    step = st.session_state.demo_step
+
+    if step == 0:
+        # First step: create a well-stocked shelf
+        grid = _random_grid(grid_rows, grid_cols, fill_pct=0.85)
+    else:
+        # Subsequent steps: remove 1-3 items to simulate sales
+        prev = tracker.get_live_grid()
+        if prev:
+            grid = _simulate_sales(prev, remove_n=random.randint(1, 3))
+        else:
+            grid = _random_grid(grid_rows, grid_cols, fill_pct=0.70)
+
+    accepted = tracker.add_frame(grid)
+
+    # Force snapshot on every demo step for visibility
+    snap = tracker.take_snapshot()
+    snapshot_taken = False
+    if snap:
+        snapshot_taken = True
+        st.session_state.snapshot_count += 1
+        db.save_grid_snapshot(snap.grid_map, snap.item_counts)
+        sales    = tracker.get_latest_sales()
+        restocks = tracker.get_latest_restocks()
+        if sales:
+            db.log_sales(sales)
+        if restocks:
+            db.log_restocks(restocks)
+
+    stock    = tracker.get_current_stock()
+    rate     = tracker.get_sales_rate()
+    grid_now = tracker.get_live_grid() or grid
+    alerts   = engine.check_alerts(stock, rate, grid_now)
+    recs     = engine.get_recommendations(stock, rate)
+
+    st.session_state.last_alerts = alerts
+    st.session_state.last_recs   = recs
+    st.session_state.frame_count += 1
+    st.session_state.demo_step   += 1
+
+    ts       = datetime.now().strftime("%H:%M:%S")
+    occ_tag  = "" if accepted else " [OCCLUDED—skipped]"
+    snap_tag = " 📸 SNAPSHOT" if snapshot_taken else ""
+    st.session_state.log_lines.append(
+        f"[{ts}] Demo step #{st.session_state.demo_step} — "
+        f"Grid {grid_rows}×{grid_cols}{occ_tag}{snap_tag}"
+    )
+
+    return grid, stock, rate, alerts, recs
+
+
 # ======================================================================
 # Main layout
 # ======================================================================
 col_vid, col_data = st.columns([3, 2], gap="large")
 
-# ---------- LEFT: video / image ----------
+# ---------- LEFT: video / image / demo ----------
 with col_vid:
     if source == "🎥 Webcam":
         st.markdown("### 🎥 Live Camera + Grid Overlay")
-        run = st.checkbox("▶  Start camera", value=False, key="cam_toggle")
-        snap_btn = st.button("📸 Manual snapshot", disabled=not run)
-        frame_ph = st.empty()
+        run      = st.checkbox("▶  Start camera", value=False, key="cam_toggle")
+        snap_col1, snap_col2 = st.columns(2)
+        with snap_col1:
+            manual_snap = st.button("📸 Manual snapshot", disabled=not run, key="snap_btn")
+        frame_ph  = st.empty()
         status_ph = st.empty()
 
         if run:
             cap = cv2.VideoCapture(0)
             if not cap.isOpened():
-                st.error("❌ Cannot open webcam.")
+                st.error("❌ Cannot open webcam. Check connections or use Demo mode.")
             else:
                 status_ph.info("📡 Camera active — uncheck to stop")
                 while run:
@@ -294,11 +446,10 @@ with col_vid:
 
                     annotated, grid_map, stock, rate, alerts, recs = process_frame(frame)
 
-                    # Manual snapshot
-                    if snap_btn:
+                    # Manual snapshot (button is True only for the first rerun)
+                    if manual_snap:
                         tracker.take_snapshot()
                         st.session_state.snapshot_count += 1
-                        snap_btn = False
 
                     frame_ph.image(
                         cv2.cvtColor(annotated, cv2.COLOR_BGR2RGB),
@@ -314,13 +465,14 @@ with col_vid:
                     f"{st.session_state.snapshot_count} snapshots"
                 )
 
-    else:  # Upload image
+    elif source == "🖼️ Upload image":
         st.markdown("### 🖼️ Image Analysis")
         uploaded = st.file_uploader(
-            "Upload a shelf image", type=["jpg", "jpeg", "png", "bmp", "webp"],
+            "Upload a shelf image",
+            type=["jpg", "jpeg", "png", "bmp", "webp"],
         )
         if uploaded is not None:
-            raw = np.asarray(bytearray(uploaded.read()), dtype=np.uint8)
+            raw   = np.asarray(bytearray(uploaded.read()), dtype=np.uint8)
             frame = cv2.imdecode(raw, cv2.IMREAD_COLOR)
             if frame is None:
                 st.error("❌ Could not decode image.")
@@ -334,49 +486,96 @@ with col_vid:
                 st.image(
                     cv2.cvtColor(annotated, cv2.COLOR_BGR2RGB),
                     channels="RGB", use_container_width=True,
-                    caption=f"Grid: {grid_rows}×{grid_cols} | "
-                            f"Shelf det: {sum(stock.values())} items",
+                    caption=(
+                        f"Grid: {grid_rows}×{grid_cols} | "
+                        f"Shelf det: {sum(stock.values())} items"
+                    ),
                 )
         else:
             st.info("Upload a shelf image to begin.")
 
+    else:  # Demo simulation
+        st.markdown("### 🧪 Demo Simulation")
+        st.markdown(
+            "<div class='demo-banner'>🎮 Simulation mode — no camera needed</div>",
+            unsafe_allow_html=True,
+        )
+        st.caption(
+            "Each click simulates a time interval on the shelf. "
+            "Items are randomly placed, then removed to mimic sales."
+        )
+        d1, d2 = st.columns(2)
+        with d1:
+            sim_btn = st.button("▶ Run 1 step", use_container_width=True, type="primary")
+        with d2:
+            sim5_btn = st.button("⏩ Run 5 steps", use_container_width=True)
+
+        steps = 0
+        if sim_btn:
+            steps = 1
+        elif sim5_btn:
+            steps = 5
+
+        if steps > 0:
+            for _ in range(steps):
+                grid, stock, rate, alerts, recs = run_demo_step()
+            live_grid = tracker.get_live_grid()
+            if live_grid:
+                st.markdown("#### Current Shelf Grid")
+                st.markdown(render_grid_html(live_grid), unsafe_allow_html=True)
+
+        elif st.session_state.demo_step > 0:
+            live_grid = tracker.get_live_grid()
+            if live_grid:
+                st.markdown("#### Current Shelf Grid")
+                st.markdown(render_grid_html(live_grid), unsafe_allow_html=True)
+        else:
+            st.info("Click **Run 1 step** to begin the simulation.")
+
 # ---------- RIGHT: data panels ----------
 with col_data:
-    stock = tracker.get_current_stock()
-    rate = tracker.get_sales_rate()
-    stats = tracker.get_stats()
+    stock     = tracker.get_current_stock()
+    rate      = tracker.get_sales_rate()
+    stats     = tracker.get_stats()
     live_grid = tracker.get_live_grid()
 
-    # Top metrics
+    # Top metrics row
     m1, m2, m3, m4 = st.columns(4)
-    m1.metric("Items", sum(stock.values()) if stock else 0)
-    m2.metric("Classes", len(stock))
+    m1.metric("Items",     sum(stock.values()) if stock else 0)
+    m2.metric("Classes",   len(stock))
     m3.metric("Snapshots", st.session_state.snapshot_count)
-    m4.metric("Frames", st.session_state.frame_count)
+    m4.metric("Frames",    st.session_state.frame_count)
 
-    st.markdown("---")
+    st.markdown('<hr class="section-divider">', unsafe_allow_html=True)
 
     # --- Grid map ---
-    st.markdown("### 🔲 Shelf Grid Map")
-    if live_grid:
-        st.markdown(render_grid_html(live_grid), unsafe_allow_html=True)
-    else:
-        st.caption("No grid data — start the camera or upload an image.")
+    if source != "🧪 Demo simulation":
+        st.markdown("### 🔲 Shelf Grid Map")
+        if live_grid:
+            st.markdown(render_grid_html(live_grid), unsafe_allow_html=True)
+        else:
+            st.caption("No grid data — start the camera or upload an image.")
 
-    st.markdown("---")
+    st.markdown('<hr class="section-divider">', unsafe_allow_html=True)
 
     # --- Stock summary ---
     st.markdown("### 📦 Stock Summary")
     if stock:
-        rows = [{"Item": k, "Count": v, "Sales/hr": f"{rate.get(k,0):.1f}"}
-                for k, v in sorted(stock.items())]
-        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+        rows = [
+            {"Item": k, "Count": v, "Sales/hr": f"{rate.get(k,0):.1f}"}
+            for k, v in sorted(stock.items())
+        ]
+        st.dataframe(
+            pd.DataFrame(rows),
+            use_container_width=True,
+            hide_index=True,
+        )
     else:
         st.caption("No items on shelf yet.")
 
     # --- Sales ---
     st.markdown("### 🔄 Sales (last snapshot)")
-    sales = tracker.get_latest_sales()
+    sales    = tracker.get_latest_sales()
     restocks = tracker.get_latest_restocks()
     if sales:
         for item, qty in sales.items():
@@ -426,9 +625,29 @@ with col_data:
 # Bottom tabs
 # ======================================================================
 st.markdown("---")
-tab_heat, tab_hist, tab_log = st.tabs(
-    ["🌡️ Emptiness Heatmap", "🗄️ History", "📝 Log"]
+tab_trend, tab_heat, tab_hist, tab_log = st.tabs(
+    ["📈 Stock Trends", "🌡️ Emptiness Heatmap", "🗄️ History", "📝 Log"]
 )
+
+# --- Trend chart ---
+with tab_trend:
+    history = tracker.get_stock_history()
+    if len(history) >= 2:
+        # Build dataframe: one row per snapshot, one column per item
+        records = []
+        for ts, counts in history:
+            row = {"Time": ts.strftime("%H:%M:%S")}
+            row.update(counts)
+            records.append(row)
+        df_trend = pd.DataFrame(records).fillna(0)
+        item_cols = [c for c in df_trend.columns if c != "Time"]
+        if item_cols:
+            st.markdown("Stock level per item across snapshots:")
+            st.line_chart(df_trend.set_index("Time")[item_cols])
+        else:
+            st.info("No items tracked yet.")
+    else:
+        st.info("Need at least 2 snapshots to show trends.")
 
 with tab_heat:
     heatmap = tracker.compute_emptiness_heatmap()
@@ -467,20 +686,113 @@ with tab_log:
         st.caption("No log entries.")
 
 # ======================================================================
+# Sales Debug panel  (collapsed by default)
+# ======================================================================
+with st.expander("🔍 Sales Debug — Movement vs Disappearance"):
+    prev_snap = tracker.previous_snapshot
+    curr_snap = tracker.current_snapshot
+
+    if prev_snap is None or curr_snap is None:
+        st.info("Need at least 2 snapshots to show a diff.")
+    else:
+        old_grid = prev_snap.grid_map
+        new_grid = curr_snap.grid_map
+
+        # --- Count gate summary ---
+        def _count_grid(g):
+            c = {}
+            for row in g:
+                for cell in row:
+                    if cell != "empty":
+                        c[cell] = c.get(cell, 0) + 1
+            return c
+
+        old_counts = _count_grid(old_grid)
+        new_counts = _count_grid(new_grid)
+        all_items  = sorted(set(old_counts) | set(new_counts))
+
+        st.markdown("**Count gate** — `cap = old_count − new_count`")
+        st.caption(
+            "cap > 0 → sale confirmed · cap = 0 → rearrangement (no sale) "
+            "· cap < 0 → restock"
+        )
+        cg_rows = []
+        for it in all_items:
+            old_n = old_counts.get(it, 0)
+            new_n = new_counts.get(it, 0)
+            cap   = old_n - new_n
+            cg_rows.append({
+                "Item":      it,
+                "Prev count": old_n,
+                "Curr count": new_n,
+                "Cap":        cap,
+                "Decision":   "✅ SALE" if cap > 0 else
+                              ("🔄 REARRANGEMENT" if cap == 0 else "📦 RESTOCK"),
+            })
+        if cg_rows:
+            st.dataframe(
+                pd.DataFrame(cg_rows),
+                use_container_width=True,
+                hide_index=True,
+            )
+
+        # --- Per-item movement classification ---
+        st.markdown("**Movement classification**")
+        mv = detect_movement(old_grid, new_grid)
+        if mv:
+            _BADGES = {
+                "SOLD":      "🔴 SOLD",
+                "RESTOCKED": "🟢 RESTOCKED",
+                "MOVED":     "🟡 MOVED",
+                "UNCHANGED": "⚪ UNCHANGED",
+            }
+            for item, status in sorted(mv.items()):
+                badge = _BADGES.get(status, status)
+                st.markdown(
+                    f"`{item}` → **{badge}**",
+                    unsafe_allow_html=False,
+                )
+        else:
+            st.caption("No items to classify.")
+
+        # --- Confirmed sales / restocks ---
+        dbg_sales, dbg_restocks = detect_sales(old_grid, new_grid)
+        if dbg_sales:
+            st.markdown("**Confirmed sales this diff:**")
+            for item, qty in dbg_sales.items():
+                st.markdown(
+                    f"<div class='alert-warning'>"
+                    f"⬇️ <b>{item}</b> — {qty} unit(s) confirmed sold"
+                    f"</div>",
+                    unsafe_allow_html=True,
+                )
+        if dbg_restocks:
+            st.markdown("**Confirmed restocks this diff:**")
+            for item, qty in dbg_restocks.items():
+                st.markdown(
+                    f"<div class='rec-card'>"
+                    f"⬆️ <b>{item}</b> — {qty} unit(s) restocked"
+                    f"</div>",
+                    unsafe_allow_html=True,
+                )
+        if not dbg_sales and not dbg_restocks:
+            st.success("No net sales or restocks between last two snapshots.")
+
+# ======================================================================
 # Tracking stats (collapsed)
 # ======================================================================
 with st.expander("📊 Tracking Stats"):
     stats = tracker.get_stats()
     sc1, sc2, sc3 = st.columns(3)
-    sc1.metric("Frames processed", stats["frames_processed"])
+    sc1.metric("Frames processed",        stats["frames_processed"])
     sc2.metric("Frames skipped (occlusion)", stats["frames_skipped"])
-    sc3.metric("Buffer fill", f"{stats['buffer_fill']}/{buffer_size}")
+    sc3.metric("Buffer fill",             f"{stats['buffer_fill']}/{buffer_size}")
     if stats["tracking_since"]:
         st.caption(f"Tracking since {stats['tracking_since'].strftime('%H:%M:%S')}")
 
 # Footer
 st.markdown(
     "<br><center style='color:#555;font-size:.7rem;'>"
-    "AI Retail Dashboard · Grid + Snapshot · YOLOv8 + Streamlit"
+    "AI Retail Dashboard v2 · Grid + Snapshot · YOLOv8 + Streamlit · Movement-Aware Sales"
     "</center>", unsafe_allow_html=True,
 )

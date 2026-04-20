@@ -1,21 +1,37 @@
 """
 Snapshot-based stock tracking module.
 ======================================
-Replaces simple count-difference tracking with a **position-aware**
-system built on grid snapshots.
+Replaces simple count-difference tracking with a **position-aware,
+movement-aware** system built on grid snapshots.
 
 Key concepts
 ------------
 * **Rolling frame buffer** — last N grid observations are kept.
+
 * **Majority voting** — a stable grid is produced by voting across
   the buffer; a cell is only "empty" if the *majority* of recent
   frames agree.  This eliminates false sales from momentary occlusion.
+
 * **Occlusion guard** — if occupied-cell count drops by > 50 %
   compared to the running average the frame is discarded (someone is
   blocking the camera).
-* **Position-based diff** — sales and restocks are detected by
-  comparing cell-by-cell: ``old[r][c]="product" → new[r][c]="empty"``
-  counts as one sale.
+
+* **Count-capped position diff** — the critical upgrade over a naive
+  cell-by-cell diff.  Sales for each item are capped at:
+
+      cap = old_count(item) – new_count(item)
+
+  If cap ≤ 0 the item count has not decreased, so any ``product →
+  empty`` cell transitions are treated as *movements*, not sales.
+  If cap > 0, exactly ``cap`` disappeared cells are counted as
+  confirmed sales.  This makes the system immune to rearrangements:
+  a bottle that moves from (0,0) → (0,2) causes NO sale because the
+  global bottle count stays the same.
+
+* **Standalone helpers** — ``detect_sales()`` and
+  ``detect_movement()`` are module-level functions usable outside the
+  tracker class for unit testing or custom pipelines.
+
 * **Stock history** — each snapshot's item counts are kept for
   real-time trend charts in the Streamlit dashboard.
 """
@@ -259,47 +275,70 @@ class SnapshotTracker:
         return stable
 
     # ------------------------------------------------------------------
-    # Position-based snapshot comparison
+    # Grid item counter (helper used by comparison logic)
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _count_items_in_grid(grid: List[List[str]]) -> Dict[str, int]:
+        """
+        Count every non-empty cell label in *grid*.
+
+        Returns a dict mapping class → count, e.g. {"bottle": 3, "cup": 1}.
+        Used by the movement-aware comparison to establish per-item caps.
+        """
+        counts: Dict[str, int] = {}
+        for row in grid:
+            for cell in row:
+                if cell != "empty":
+                    counts[cell] = counts.get(cell, 0) + 1
+        return counts
+
+    # ------------------------------------------------------------------
+    # Position-based snapshot comparison  (movement-aware)
     # ------------------------------------------------------------------
     def _compare_snapshots(self):
         """
-        Cell-by-cell diff between previous and current snapshot.
+        Count-capped, movement-aware diff between previous and current
+        snapshot grids.
 
-        Sales detection rule:
-            old[r][c] = "product"  AND  new[r][c] = "empty"
-            → 1 sale of that product
+        Algorithm
+        ---------
+        For each item class:
 
-        Restock detection rule:
-            old[r][c] = "empty"    AND  new[r][c] = "product"
-            → 1 restock of that product
+        1. **Count gate** — compute cap = old_count – new_count.
+           * cap ≤ 0  → the item did not decrease globally.  Any
+             ``product → empty`` cell transitions are rearrangements,
+             not sales.  Skip sales detection for this item.
+           * cap > 0  → the item count decreased; up to *cap* cells
+             are considered confirmed sales.
 
-        This is the core of position-based tracking — it does NOT
-        rely on total counts, so it's immune to temporary count
-        fluctuations caused by occlusion.
+        2. **Cell scan (sales)** — iterate over cells where
+           ``old[r][c] == item`` and ``new[r][c] == "empty"``.
+           Count each as a sale until the cap is reached.
+
+        3. **Restock scan** — cells where ``old[r][c] == "empty"``
+           and ``new[r][c] == item``, capped at new_count – old_count
+           (symmetric logic).
+
+        Why this works for rearrangements
+        -----------------------------------
+        If a bottle moves from (0,0) to (0,2) the global bottle count
+        stays the same, so cap = 0 and the loop body is never entered.
+        No false sale is generated even though (0,0) changed from
+        "bottle" → "empty".
         """
         old = self.previous_snapshot.grid_map
         new = self.current_snapshot.grid_map
 
-        self.latest_sales    = {}
-        self.latest_restocks = {}
+        # Delegate to the standalone function so logic lives in one place
+        sales, restocks = detect_sales(old, new)
 
-        rows = min(len(old), len(new))
-        cols = min(
-            len(old[0]) if old else 0,
-            len(new[0]) if new else 0,
-        )
+        self.latest_sales    = sales
+        self.latest_restocks = restocks
 
-        for r in range(rows):
-            for c in range(cols):
-                o, n = old[r][c], new[r][c]
-                if o != "empty" and n == "empty":
-                    # Product disappeared → sale
-                    self.latest_sales[o] = self.latest_sales.get(o, 0) + 1
-                    self.total_sales[o] += 1
-                elif o == "empty" and n != "empty":
-                    # Cell filled → restock
-                    self.latest_restocks[n] = self.latest_restocks.get(n, 0) + 1
-                    self.total_restocks[n] += 1
+        for item, qty in sales.items():
+            self.total_sales[item] += qty
+        for item, qty in restocks.items():
+            self.total_restocks[item] += qty
 
     # ------------------------------------------------------------------
     # Sales rate  (items / hour from last 2-3 snapshots)
@@ -307,7 +346,8 @@ class SnapshotTracker:
     def get_sales_rate(self) -> Dict[str, float]:
         """
         Compute per-item sales rate (units / hour) using the last 3
-        snapshots.  Using multiple intervals smooths out noise.
+        snapshots.  Uses the same movement-aware detect_sales() logic
+        as snapshot comparison so rearrangements are excluded here too.
         """
         if len(self.snapshot_history) < 2:
             return {}
@@ -316,17 +356,15 @@ class SnapshotTracker:
         span_secs = (recent[-1].timestamp - recent[0].timestamp).total_seconds()
         span_hrs  = max(span_secs / 3600, 0.001)
 
+        # Accumulate movement-aware sales across the recent window
         sales: Dict[str, int] = defaultdict(int)
         for i in range(1, len(recent)):
-            o = recent[i - 1].grid_map
-            n = recent[i].grid_map
-            for r in range(min(len(o), len(n))):
-                for c in range(min(
-                    len(o[0]) if o else 0,
-                    len(n[0]) if n else 0,
-                )):
-                    if o[r][c] != "empty" and n[r][c] == "empty":
-                        sales[o[r][c]] += 1
+            interval_sales, _ = detect_sales(
+                recent[i - 1].grid_map,
+                recent[i].grid_map,
+            )
+            for item, qty in interval_sales.items():
+                sales[item] += qty
 
         return {item: cnt / span_hrs for item, cnt in sales.items()}
 
@@ -418,3 +456,174 @@ class SnapshotTracker:
         self.frames_processed    = 0
         self.frames_skipped_occlusion = 0
         self.stock_history.clear()
+
+
+# ======================================================================
+# Module-level standalone functions (importable for unit tests / pipelines)
+# ======================================================================
+
+def detect_sales(
+    old_map: List[List[str]],
+    new_map: List[List[str]],
+) -> Tuple[Dict[str, int], Dict[str, int]]:
+    """
+    Count-capped, movement-aware diff between two grid snapshots.
+
+    Parameters
+    ----------
+    old_map : 2-D list of labels from the **previous** snapshot.
+    new_map : 2-D list of labels from the **current** snapshot.
+
+    Returns
+    -------
+    sales    : {item: qty_sold}    — confirmed disappearances only.
+    restocks : {item: qty_added}   — confirmed new arrivals only.
+
+    Algorithm
+    ---------
+    For each item class *X*:
+
+    **Sales** (item count decreased):
+        cap = old_count(X) - new_count(X)
+        If cap <= 0  → no net reduction; any cell changes are
+                        rearrangements → skip.
+        If cap > 0   → scan cells where old[r][c]=="X" and
+                        new[r][c]=="empty"; count as sale until
+                        *cap* is reached.
+
+    **Restocks** (item count increased):
+        cap = new_count(X) - old_count(X)
+        Scan cells where old[r][c]=="empty" and new[r][c]=="X";
+        count up to *cap*.
+
+    Why this is movement-proof
+    --------------------------
+    If a bottle moves from (0,0) to (0,2) the global count stays at 3.
+    cap = 3 - 3 = 0, so the inner loop never executes and no false
+    sale is recorded.
+    """
+    if not old_map or not new_map:
+        return {}, {}
+
+    rows = min(len(old_map), len(new_map))
+    cols = min(
+        len(old_map[0]) if old_map else 0,
+        len(new_map[0]) if new_map else 0,
+    )
+    if rows == 0 or cols == 0:
+        return {}, {}
+
+    # --- Step 1: per-item global counts ---
+    def _count(grid: List[List[str]]) -> Dict[str, int]:
+        c: Dict[str, int] = {}
+        for row in grid:
+            for cell in row:
+                if cell != "empty":
+                    c[cell] = c.get(cell, 0) + 1
+        return c
+
+    old_counts = _count(old_map)
+    new_counts = _count(new_map)
+
+    # Gather all item classes seen in either snapshot
+    all_items = set(old_counts) | set(new_counts)
+
+    sales:    Dict[str, int] = {}
+    restocks: Dict[str, int] = {}
+
+    for item in all_items:
+        old_n = old_counts.get(item, 0)
+        new_n = new_counts.get(item, 0)
+
+        # ---- Sales: item count decreased ----
+        sale_cap = old_n - new_n
+        if sale_cap > 0:
+            confirmed = 0
+            for r in range(rows):
+                for c in range(cols):
+                    if confirmed >= sale_cap:
+                        break
+                    # Cell had the item before AND is now empty
+                    if old_map[r][c] == item and new_map[r][c] == "empty":
+                        confirmed += 1
+                if confirmed >= sale_cap:
+                    break
+            if confirmed > 0:
+                sales[item] = confirmed
+
+        # ---- Restocks: item count increased ----
+        restock_cap = new_n - old_n
+        if restock_cap > 0:
+            confirmed = 0
+            for r in range(rows):
+                for c in range(cols):
+                    if confirmed >= restock_cap:
+                        break
+                    # Cell was empty before AND now has the item
+                    if old_map[r][c] == "empty" and new_map[r][c] == item:
+                        confirmed += 1
+                if confirmed >= restock_cap:
+                    break
+            if confirmed > 0:
+                restocks[item] = confirmed
+
+    return sales, restocks
+
+
+def detect_movement(
+    old_map: List[List[str]],
+    new_map: List[List[str]],
+) -> Dict[str, str]:
+    """
+    Classify per-item changes between two snapshots as MOVED, SOLD,
+    RESTOCKED, or UNCHANGED.
+
+    Returns
+    -------
+    A dict mapping item name to one of:
+        "SOLD"       — net count decreased (confirmed disappearance)
+        "RESTOCKED"  — net count increased
+        "MOVED"      — cell positions changed but global count unchanged
+        "UNCHANGED"  — no change in count or positions
+
+    Useful for the dashboard debug panel and human-readable logging.
+    """
+    if not old_map or not new_map:
+        return {}
+
+    def _count(grid: List[List[str]]) -> Dict[str, int]:
+        c: Dict[str, int] = {}
+        for row in grid:
+            for cell in row:
+                if cell != "empty":
+                    c[cell] = c.get(cell, 0) + 1
+        return c
+
+    def _positions(grid: List[List[str]], item: str) -> set:
+        return {
+            (r, c)
+            for r, row in enumerate(grid)
+            for c, cell in enumerate(row)
+            if cell == item
+        }
+
+    old_counts = _count(old_map)
+    new_counts = _count(new_map)
+    all_items  = set(old_counts) | set(new_counts)
+
+    result: Dict[str, str] = {}
+    for item in all_items:
+        old_n = old_counts.get(item, 0)
+        new_n = new_counts.get(item, 0)
+
+        if new_n < old_n:
+            result[item] = "SOLD"
+        elif new_n > old_n:
+            result[item] = "RESTOCKED"
+        else:
+            # Same count — check if positions changed (movement)
+            old_pos = _positions(old_map, item)
+            new_pos = _positions(new_map, item)
+            result[item] = "MOVED" if old_pos != new_pos else "UNCHANGED"
+
+    return result
