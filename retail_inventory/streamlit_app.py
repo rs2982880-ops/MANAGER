@@ -27,9 +27,12 @@ from typing import Dict, Optional
 
 import cv2
 import numpy as np
+import pandas as pd
+import plotly.graph_objects as go
 import streamlit as st
 
 from camera_manager import ShelfCamera
+from database import Database
 from detector import ProductDetector
 from storage import ShelfStorage
 from utils import format_time_remaining
@@ -46,9 +49,10 @@ st.set_page_config(
 )
 
 # ═══════════════════════════════════════════════════════════════════════════
-# PERSISTENT STORAGE SINGLETON
+# PERSISTENT STORAGE + DATABASE SINGLETONS
 # ═══════════════════════════════════════════════════════════════════════════
 _storage = ShelfStorage()
+_db = Database()
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -476,6 +480,45 @@ div[data-testid="column"]:first-child .stButton > button:disabled {
 /* ═══ Streamlit overrides ═══ */
 .stAlert { border-radius: 12px !important; }
 .stCaption { color: #1f2937 !important; }
+
+/* ═══ Tabs ═══ */
+.stTabs [data-baseweb="tab-list"] {
+    gap: 0;
+    background: rgba(255,255,255,0.02);
+    border-radius: 12px;
+    padding: 4px;
+}
+.stTabs [data-baseweb="tab"] {
+    border-radius: 8px;
+    color: #6b7280;
+    font-weight: 600;
+    font-size: 0.78rem;
+    padding: 0.4rem 1rem;
+}
+.stTabs [aria-selected="true"] {
+    background: rgba(16,185,129,0.1) !important;
+    color: #10b981 !important;
+}
+.stTabs [data-baseweb="tab-border"] { display: none; }
+.stTabs [data-baseweb="tab-highlight"] { display: none; }
+
+/* ═══ Sales analytics section ═══ */
+.analytics-divider {
+    border: none;
+    border-top: 1px solid rgba(255,255,255,0.04);
+    margin: 1.5rem 0 1rem 0;
+}
+.sales-header {
+    font-size: 1.2rem;
+    font-weight: 800;
+    color: #f3f4f6;
+    margin-bottom: 0.3rem;
+}
+.sales-sub {
+    font-size: 0.75rem;
+    color: #4b5563;
+    margin-bottom: 1rem;
+}
 </style>
 """, unsafe_allow_html=True)
 
@@ -582,18 +625,25 @@ def _persist_config():
 
 
 def _persist_shelf(state: dict):
-    """Save current shelf state for reload survival."""
+    """Save current shelf state to JSON + log new sales to SQLite DB."""
+    latest_sales = state.get("latest_sales", {})
     sales_entries = []
-    for item, qty in state.get("latest_sales", {}).items():
+    for item, qty in latest_sales.items():
         sales_entries.append({
             "item": item, "qty": qty,
             "time": datetime.now().isoformat(),
         })
+
+    # ── Log sales to SQLite database (permanent storage) ──
+    if latest_sales and latest_sales != st.session_state.get("_last_logged_sales"):
+        _db.log_sales(latest_sales)
+        st.session_state["_last_logged_sales"] = dict(latest_sales)
+
     _storage.save_shelf_state(
         stock_counts=dict(
             (p["name"], p["stock"]) for p in state.get("products", [])
         ),
-        grid_state=None,  # Grid is large, skip for speed
+        grid_state=None,
         sales_history=sales_entries,
         alerts=state.get("alerts", []),
         frame_count=state.get("frame_count", 0),
@@ -1002,3 +1052,181 @@ else:
                 <div class="dph-text">Inventory insights will appear here<br>once monitoring begins.</div>
             </div>
             """, unsafe_allow_html=True)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# SALES ANALYTICS SECTION — Charts + Data Tables
+# ═══════════════════════════════════════════════════════════════════════════
+
+# Plotly dark theme layout template
+_PLOTLY_LAYOUT = dict(
+    paper_bgcolor="rgba(0,0,0,0)",
+    plot_bgcolor="rgba(0,0,0,0)",
+    font=dict(family="Inter, sans-serif", color="#9ca3af", size=11),
+    margin=dict(l=40, r=20, t=40, b=40),
+    legend=dict(
+        bgcolor="rgba(0,0,0,0)",
+        font=dict(size=10, color="#6b7280"),
+        orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1,
+    ),
+    xaxis=dict(
+        gridcolor="rgba(255,255,255,0.03)",
+        linecolor="rgba(255,255,255,0.06)",
+        tickfont=dict(size=10),
+    ),
+    yaxis=dict(
+        gridcolor="rgba(255,255,255,0.03)",
+        linecolor="rgba(255,255,255,0.06)",
+        tickfont=dict(size=10),
+        title_font=dict(size=11),
+    ),
+    hoverlabel=dict(
+        bgcolor="#1a1a2e", font_size=12, font_color="#e5e7eb",
+        bordercolor="rgba(16,185,129,0.3)",
+    ),
+    bargap=0.3,
+)
+
+# Product colour palette for chart bars
+_CHART_COLORS = [
+    "#10b981", "#06b6d4", "#8b5cf6", "#f59e0b", "#ef4444",
+    "#ec4899", "#14b8a6", "#f97316", "#84cc16", "#6366f1",
+]
+
+
+def _build_sales_chart(data: list, period_key: str, title: str) -> go.Figure:
+    """
+    Build a grouped bar chart from aggregated sales data.
+
+    Args:
+        data:       list of dicts from Database.get_*_sales()
+        period_key: the dict key for the time period ('date','week','month','year')
+        title:      chart title
+    """
+    if not data:
+        fig = go.Figure()
+        fig.update_layout(
+            **_PLOTLY_LAYOUT,
+            title=dict(text=title, font=dict(size=14, color="#d1d5db")),
+            height=350,
+            annotations=[dict(
+                text="No sales data yet", showarrow=False,
+                font=dict(size=14, color="#374151"),
+                xref="paper", yref="paper", x=0.5, y=0.5,
+            )],
+        )
+        return fig
+
+    df = pd.DataFrame(data)
+    items = df["item"].unique()
+    periods = df[period_key].unique()
+
+    fig = go.Figure()
+    for i, item in enumerate(items):
+        item_df = df[df["item"] == item]
+        color = _CHART_COLORS[i % len(_CHART_COLORS)]
+        fig.add_trace(go.Bar(
+            x=item_df[period_key],
+            y=item_df["qty"],
+            name=item,
+            marker_color=color,
+            marker_line_width=0,
+            opacity=0.9,
+        ))
+
+    fig.update_layout(
+        **_PLOTLY_LAYOUT,
+        title=dict(text=title, font=dict(size=14, color="#d1d5db")),
+        barmode="group",
+        height=380,
+        yaxis_title="Units Sold",
+    )
+    return fig
+
+
+# ── Section divider ──
+st.markdown('<hr class="analytics-divider">', unsafe_allow_html=True)
+st.markdown('<div class="sales-header">📈 Sales Analytics</div>', unsafe_allow_html=True)
+st.markdown(
+    '<div class="sales-sub">Product sales history from the database — updated live during monitoring</div>',
+    unsafe_allow_html=True,
+)
+
+# ── Today's summary KPIs ──
+total_all_time = _db.get_total_sales_all_time()
+today_sales = _db.get_sales_summary_today()
+today_total = sum(s["qty"] for s in today_sales)
+
+k1, k2, k3 = st.columns(3)
+with k1:
+    st.markdown(f"""
+    <div class="kpi-card"><div class="kpi-val green">{today_total}</div>
+    <div class="kpi-lbl">Sold Today</div></div>
+    """, unsafe_allow_html=True)
+with k2:
+    st.markdown(f"""
+    <div class="kpi-card"><div class="kpi-val">{len(today_sales)}</div>
+    <div class="kpi-lbl">Products Sold Today</div></div>
+    """, unsafe_allow_html=True)
+with k3:
+    st.markdown(f"""
+    <div class="kpi-card"><div class="kpi-val amber">{total_all_time}</div>
+    <div class="kpi-lbl">Total Sold (All Time)</div></div>
+    """, unsafe_allow_html=True)
+
+st.markdown("")
+
+# ── Tabbed Charts: Daily / Weekly / Monthly / Yearly ──
+tab_d, tab_w, tab_m, tab_y = st.tabs(["📅 Daily", "📆 Weekly", "🗓️ Monthly", "📊 Yearly"])
+
+with tab_d:
+    daily_data = _db.get_daily_sales(days=30)
+    fig_d = _build_sales_chart(daily_data, "date", "Daily Sales — Last 30 Days")
+    st.plotly_chart(fig_d, use_container_width=True, key="chart_daily")
+
+    if daily_data:
+        df_d = pd.DataFrame(daily_data)
+        pivot_d = df_d.pivot_table(index="date", columns="item", values="qty", fill_value=0)
+        pivot_d.loc["TOTAL"] = pivot_d.sum()
+        st.dataframe(pivot_d, use_container_width=True)
+
+with tab_w:
+    weekly_data = _db.get_weekly_sales(weeks=12)
+    fig_w = _build_sales_chart(weekly_data, "week", "Weekly Sales — Last 12 Weeks")
+    st.plotly_chart(fig_w, use_container_width=True, key="chart_weekly")
+
+    if weekly_data:
+        df_w = pd.DataFrame(weekly_data)
+        pivot_w = df_w.pivot_table(index="week", columns="item", values="qty", fill_value=0)
+        pivot_w.loc["TOTAL"] = pivot_w.sum()
+        st.dataframe(pivot_w, use_container_width=True)
+
+with tab_m:
+    monthly_data = _db.get_monthly_sales(months=12)
+    fig_m = _build_sales_chart(monthly_data, "month", "Monthly Sales — Last 12 Months")
+    st.plotly_chart(fig_m, use_container_width=True, key="chart_monthly")
+
+    if monthly_data:
+        df_m = pd.DataFrame(monthly_data)
+        pivot_m = df_m.pivot_table(index="month", columns="item", values="qty", fill_value=0)
+        pivot_m.loc["TOTAL"] = pivot_m.sum()
+        st.dataframe(pivot_m, use_container_width=True)
+
+with tab_y:
+    yearly_data = _db.get_yearly_sales()
+    fig_y = _build_sales_chart(yearly_data, "year", "Yearly Sales — All Time")
+    st.plotly_chart(fig_y, use_container_width=True, key="chart_yearly")
+
+    if yearly_data:
+        df_y = pd.DataFrame(yearly_data)
+        pivot_y = df_y.pivot_table(index="year", columns="item", values="qty", fill_value=0)
+        pivot_y.loc["TOTAL"] = pivot_y.sum()
+        st.dataframe(pivot_y, use_container_width=True)
+
+# ── Today's Sales Detail Table ──
+if today_sales:
+    st.markdown('<div class="sec-hd" style="margin-top:1rem">🛒 Today\'s Sales Breakdown</div>', unsafe_allow_html=True)
+    today_html = ""
+    for s in today_sales:
+        today_html += f'<div class="sale-row"><span>{s["item"]}</span><span class="sale-qty">{s["qty"]} units</span></div>'
+    st.markdown(today_html, unsafe_allow_html=True)

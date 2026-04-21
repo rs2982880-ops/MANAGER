@@ -7,3 +7,4 @@ flask>=3.0.0
 streamlit>=1.30.0
 torch>=2.0.0
 torchvision>=0.15.0
+plotly>=5.18.0

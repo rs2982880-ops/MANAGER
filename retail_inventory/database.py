@@ -161,3 +161,112 @@ class Database:
                 "SELECT timestamp, item_name, alert_type, message "
                 "FROM alerts_log ORDER BY id DESC LIMIT ?", (limit,),
             ).fetchall()
+
+    # ------------------------------------------------------------------
+    # Sales aggregation (for charts)
+    # ------------------------------------------------------------------
+
+    def get_daily_sales(self, days: int = 30) -> List[Dict]:
+        """
+        Daily sales totals per product for the last N days.
+
+        Returns list of dicts:
+            [{"date": "2026-04-21", "item": "bottle", "qty": 5}, ...]
+        """
+        with self._connect() as conn:
+            rows = conn.execute("""
+                SELECT DATE(timestamp) AS day,
+                       item_name,
+                       SUM(quantity) AS total_qty
+                FROM   sales_events
+                WHERE  event_type = 'sale'
+                  AND  timestamp >= DATE('now', ?)
+                GROUP BY day, item_name
+                ORDER BY day ASC, item_name ASC
+            """, (f"-{days} days",)).fetchall()
+        return [{"date": r[0], "item": r[1], "qty": r[2]} for r in rows]
+
+    def get_weekly_sales(self, weeks: int = 12) -> List[Dict]:
+        """
+        Weekly sales totals per product for the last N weeks.
+
+        Returns list of dicts:
+            [{"week": "2026-W16", "item": "bottle", "qty": 12}, ...]
+        """
+        with self._connect() as conn:
+            rows = conn.execute("""
+                SELECT strftime('%Y-W%W', timestamp) AS week,
+                       item_name,
+                       SUM(quantity) AS total_qty
+                FROM   sales_events
+                WHERE  event_type = 'sale'
+                  AND  timestamp >= DATE('now', ?)
+                GROUP BY week, item_name
+                ORDER BY week ASC, item_name ASC
+            """, (f"-{weeks * 7} days",)).fetchall()
+        return [{"week": r[0], "item": r[1], "qty": r[2]} for r in rows]
+
+    def get_monthly_sales(self, months: int = 12) -> List[Dict]:
+        """
+        Monthly sales totals per product for the last N months.
+
+        Returns list of dicts:
+            [{"month": "2026-04", "item": "bottle", "qty": 30}, ...]
+        """
+        with self._connect() as conn:
+            rows = conn.execute("""
+                SELECT strftime('%Y-%m', timestamp) AS month,
+                       item_name,
+                       SUM(quantity) AS total_qty
+                FROM   sales_events
+                WHERE  event_type = 'sale'
+                  AND  timestamp >= DATE('now', ?)
+                GROUP BY month, item_name
+                ORDER BY month ASC, item_name ASC
+            """, (f"-{months} months",)).fetchall()
+        return [{"month": r[0], "item": r[1], "qty": r[2]} for r in rows]
+
+    def get_yearly_sales(self) -> List[Dict]:
+        """
+        Yearly sales totals per product (all time).
+
+        Returns list of dicts:
+            [{"year": "2026", "item": "bottle", "qty": 120}, ...]
+        """
+        with self._connect() as conn:
+            rows = conn.execute("""
+                SELECT strftime('%Y', timestamp) AS year,
+                       item_name,
+                       SUM(quantity) AS total_qty
+                FROM   sales_events
+                WHERE  event_type = 'sale'
+                GROUP BY year, item_name
+                ORDER BY year ASC, item_name ASC
+            """).fetchall()
+        return [{"year": r[0], "item": r[1], "qty": r[2]} for r in rows]
+
+    def get_sales_summary_today(self) -> List[Dict]:
+        """
+        Today's sales per product.
+
+        Returns: [{"item": "bottle", "qty": 3}, ...]
+        """
+        with self._connect() as conn:
+            rows = conn.execute("""
+                SELECT item_name, SUM(quantity) AS total_qty
+                FROM   sales_events
+                WHERE  event_type = 'sale'
+                  AND  DATE(timestamp) = DATE('now')
+                GROUP BY item_name
+                ORDER BY total_qty DESC
+            """).fetchall()
+        return [{"item": r[0], "qty": r[1]} for r in rows]
+
+    def get_total_sales_all_time(self) -> int:
+        """Total units sold all time."""
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT COALESCE(SUM(quantity), 0) FROM sales_events "
+                "WHERE event_type = 'sale'"
+            ).fetchone()
+        return row[0] if row else 0
