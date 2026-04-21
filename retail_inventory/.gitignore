@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# YOLO model weights (too large for GitHub)
+*.pt
+
+# Database
+inventory.db
+
+# JSON state
+stock.json
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+Thumbs.db
+.DS_Store

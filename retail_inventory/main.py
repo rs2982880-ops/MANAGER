@@ -203,7 +203,7 @@ def run_webcam(confidence, shelf_coords, rows, cols, snap_interval):
                 if cv2.waitKey(1) & 0xFF == ord("q"):
                     break
             except cv2.error:
-                print("[ERROR] No GUI. Use:  streamlit run app.py")
+                print("[ERROR] No GUI. Use:  python server.py")
                 break
     finally:
         cap.release()

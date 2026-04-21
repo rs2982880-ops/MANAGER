@@ -4,7 +4,12 @@ YOLO-based product detection module.
 Loads a YOLOv8 model (custom best.pt preferred, pretrained yolov8l.pt fallback)
 and exposes simple detect / draw helpers.
 
-Key upgrades
+GPU acceleration
+----------------
+* Automatically detects NVIDIA CUDA GPUs and runs inference on GPU.
+* Falls back to CPU if no compatible GPU is found.
+
+Key features
 ------------
 * ``set_allowed_classes(names)``  — runtime-configurable allowlist from the UI
 * Pretrained COCO model: only shelf-relevant classes pass through by default
@@ -13,7 +18,10 @@ Key upgrades
 """
 
 import os
+os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"  # Fix OpenMP DLL conflict on Windows
+
 import numpy as np
+import torch
 from typing import Dict, List, Optional, Set, Tuple
 
 from utils import get_color_for_class
@@ -73,11 +81,12 @@ class ProductDetector:
                              Pass an empty set to allow all non-excluded classes.
         """
         self.confidence = confidence
-        # User-defined allowlist (set via sidebar); None means "use defaults"
+        # User-defined allowlist; None means "use defaults"
         self._allowed_classes: Optional[Set[str]] = allowed_classes
         self.model = None
         self.class_names: dict = {}
         self.using_custom_model: bool = False
+        self.device: str = self._select_device()
         self._load_model(model_path)
 
     # -----------------------------------------------------------------------
@@ -89,7 +98,7 @@ class ProductDetector:
 
     def set_allowed_classes(self, names: Optional[Set[str]]):
         """
-        Update the class allowlist at runtime (called from Streamlit sidebar).
+        Update the class allowlist at runtime.
 
         Pass ``None`` to revert to the default RETAIL_CLASSES filter.
         Pass an empty set to allow every non-excluded class.
@@ -100,10 +109,33 @@ class ProductDetector:
         return self._allowed_classes
 
     # -----------------------------------------------------------------------
+    # GPU device selection
+    # -----------------------------------------------------------------------
+    @staticmethod
+    def _select_device() -> str:
+        """
+        Auto-detect the best available device.
+        Prefers CUDA GPU, falls back to CPU.
+        """
+        if torch.cuda.is_available():
+            gpu_name = torch.cuda.get_device_name(0)
+            vram_mb  = torch.cuda.get_device_properties(0).total_memory / (1024 ** 2)
+            print(f"[detector] [GPU] CUDA GPU detected: {gpu_name}")
+            print(f"[detector]    VRAM: {vram_mb:.0f} MB")
+            print(f"[detector]    CUDA version: {torch.version.cuda}")
+            print(f"[detector]    PyTorch: {torch.__version__}")
+            return "cuda:0"
+        else:
+            print("[detector] [CPU] No CUDA GPU found -- running on CPU")
+            print("[detector]    To enable GPU, install PyTorch with CUDA:")
+            print("[detector]    pip install torch torchvision --index-url https://download.pytorch.org/whl/cu124")
+            return "cpu"
+
+    # -----------------------------------------------------------------------
     # Model loading
     # -----------------------------------------------------------------------
     def _load_model(self, model_path: str):
-        """Load YOLO model with graceful fallback."""
+        """Load YOLO model with graceful fallback, placed on GPU if available."""
         try:
             from ultralytics import YOLO
         except ImportError:
@@ -120,8 +152,11 @@ class ProductDetector:
             self.model = YOLO("yolov8l.pt")
             self.using_custom_model = False
 
+        # Move model to GPU
+        self.model.to(self.device)
+
         self.class_names = self.model.names  # {int: str}
-        print(f"[detector] Ready — {len(self.class_names)} classes")
+        print(f"[detector] Ready — {len(self.class_names)} classes on {self.device.upper()}")
         if not self.using_custom_model:
             print("[detector] Retail filter active — only shelf/product objects kept")
 
@@ -168,7 +203,9 @@ class ProductDetector:
         if self.model is None:
             return [], {}
 
-        results = self.model(frame, conf=self.confidence, verbose=False)
+        results = self.model(
+            frame, conf=self.confidence, device=self.device, verbose=False,
+        )
 
         detections: List[dict] = []
         counts: Dict[str, int] = {}
@@ -198,7 +235,7 @@ class ProductDetector:
     def get_class_list(self) -> List[str]:
         """
         Return all class names the model can detect (post-filter).
-        Used to populate the sidebar multiselect.
+        Used to populate the dashboard class selector.
         """
         if isinstance(self.class_names, dict):
             all_names = list(self.class_names.values())
