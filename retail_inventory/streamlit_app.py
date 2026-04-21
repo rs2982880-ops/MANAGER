@@ -1,7 +1,8 @@
 """
-AI Shelf Monitor — Streamlit Edition
-======================================
-A clean, stable, single-shelf monitoring interface.
+AI Shelf Monitor — Streamlit Premium Edition
+==============================================
+A clean, stable, single-shelf monitoring interface with a premium
+dark-mode UI inspired by modern fintech dashboards.
 
 Run:
     streamlit run streamlit_app.py
@@ -40,131 +41,468 @@ from utils import draw_boxes, format_time_remaining
 # PAGE CONFIG — must be the first Streamlit call
 # ═══════════════════════════════════════════════════════════════════════════
 st.set_page_config(
-    page_title="AI Shelf Monitor",
-    page_icon="🔍",
+    page_title="ShelfAI — Intelligent Inventory",
+    page_icon="🛒",
     layout="wide",
     initial_sidebar_state="expanded",
 )
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# CUSTOM CSS — professional dark theme, no auto-scroll
+# PREMIUM CSS — Cryptix-inspired ultra-dark theme
 # ═══════════════════════════════════════════════════════════════════════════
 st.markdown("""
 <style>
-    /* ── Suppress Streamlit default top padding ───────────────── */
-    .block-container {
-        padding-top: 1.5rem !important;
-        padding-bottom: 1rem !important;
+    /* ═══ Google Font Import ═══ */
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap');
+
+    /* ═══ Global Overrides ═══ */
+    html, body, [class*="css"] {
+        font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif !important;
+    }
+    .stApp {
+        background: #08080d !important;
     }
 
-    /* ── Title styling ────────────────────────────────────────── */
-    .main-title {
-        font-size: 2rem;
-        font-weight: 800;
-        background: linear-gradient(135deg, #6366f1, #06b6d4);
+    /* ═══ Hide Streamlit chrome ═══ */
+    #MainMenu, footer, header {visibility: hidden !important;}
+    .stDeployButton {display: none !important;}
+
+    /* ═══ Top padding reduction ═══ */
+    .block-container {
+        padding-top: 1.2rem !important;
+        padding-bottom: 0.5rem !important;
+        max-width: 1400px !important;
+    }
+
+    /* ═══ Scrollbar ═══ */
+    ::-webkit-scrollbar { width: 6px; }
+    ::-webkit-scrollbar-track { background: #08080d; }
+    ::-webkit-scrollbar-thumb { background: #1a1a2e; border-radius: 3px; }
+    ::-webkit-scrollbar-thumb:hover { background: #10b981; }
+
+    /* ═══ SIDEBAR — deep dark, borderless ═══ */
+    section[data-testid="stSidebar"] {
+        background: #0a0a12 !important;
+        border-right: 1px solid rgba(16, 185, 129, 0.08) !important;
+    }
+    section[data-testid="stSidebar"] > div {
+        padding-top: 1.5rem;
+    }
+
+    /* Sidebar labels */
+    section[data-testid="stSidebar"] label,
+    section[data-testid="stSidebar"] .stMarkdown p {
+        color: #8892a4 !important;
+        font-size: 0.82rem !important;
+        font-weight: 500 !important;
+        letter-spacing: 0.02em;
+    }
+    section[data-testid="stSidebar"] .stMarkdown h3 {
+        color: #e2e8f0 !important;
+        font-size: 0.95rem !important;
+        font-weight: 700 !important;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+        margin-bottom: 0.8rem;
+    }
+
+    /* Sidebar selectbox / inputs — dark glass */
+    section[data-testid="stSidebar"] .stSelectbox > div > div,
+    section[data-testid="stSidebar"] .stTextInput > div > div > input,
+    section[data-testid="stSidebar"] .stNumberInput > div > div > input {
+        background: #0f0f1a !important;
+        border: 1px solid rgba(255,255,255,0.06) !important;
+        border-radius: 10px !important;
+        color: #e2e8f0 !important;
+        font-size: 0.85rem !important;
+    }
+    section[data-testid="stSidebar"] .stSelectbox > div > div:hover,
+    section[data-testid="stSidebar"] .stTextInput > div > div > input:focus {
+        border-color: rgba(16, 185, 129, 0.4) !important;
+        box-shadow: 0 0 0 1px rgba(16, 185, 129, 0.15) !important;
+    }
+
+    /* Sidebar slider */
+    section[data-testid="stSidebar"] .stSlider > div > div > div > div {
+        background: #10b981 !important;
+    }
+
+    /* Sidebar toggle */
+    section[data-testid="stSidebar"] .stCheckbox label span {
+        color: #8892a4 !important;
+    }
+
+    /* Sidebar divider */
+    section[data-testid="stSidebar"] hr {
+        border-color: rgba(255,255,255,0.04) !important;
+        margin: 1rem 0 !important;
+    }
+
+    /* ═══ MAIN CONTENT ═══ */
+
+    /* ── Hero Title ── */
+    .hero-title {
+        font-size: 2.2rem;
+        font-weight: 900;
+        color: #ffffff;
+        letter-spacing: -0.03em;
+        line-height: 1.1;
+        margin-bottom: 0.15rem;
+    }
+    .hero-title span.accent {
+        background: linear-gradient(135deg, #10b981, #06d6a0, #34d399);
         -webkit-background-clip: text;
         -webkit-text-fill-color: transparent;
-        margin-bottom: 0.2rem;
     }
-    .sub-title {
-        font-size: 0.95rem;
-        color: #94a3b8;
-        margin-bottom: 1.2rem;
+    .hero-sub {
+        font-size: 0.88rem;
+        color: #5a6478;
+        font-weight: 400;
+        margin-bottom: 1.4rem;
+        letter-spacing: 0.01em;
     }
 
-    /* ── Status bar ───────────────────────────────────────────── */
-    .status-bar {
+    /* ── Status Pill Bar ── */
+    .status-strip {
         display: flex;
-        gap: 1.5rem;
         align-items: center;
-        padding: 0.6rem 1rem;
-        background: rgba(30, 30, 50, 0.6);
-        border: 1px solid rgba(99, 102, 241, 0.3);
-        border-radius: 10px;
+        gap: 1.8rem;
+        padding: 0.65rem 1.2rem;
+        background: #0c0c14;
+        border: 1px solid rgba(255,255,255,0.04);
+        border-radius: 14px;
         margin-bottom: 1rem;
-        font-size: 0.85rem;
+        font-size: 0.8rem;
+        color: #5a6478;
+        font-weight: 500;
     }
-    .status-dot {
-        width: 10px; height: 10px;
+    .status-strip .pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+    }
+    .status-strip .dot {
+        width: 8px; height: 8px;
         border-radius: 50%;
         display: inline-block;
-        margin-right: 6px;
     }
-    .status-dot.live    { background: #22c55e; box-shadow: 0 0 6px #22c55e; }
-    .status-dot.idle    { background: #64748b; }
-    .status-dot.error   { background: #ef4444; box-shadow: 0 0 6px #ef4444; }
+    .dot-live   { background: #10b981; box-shadow: 0 0 8px rgba(16,185,129,0.6); }
+    .dot-idle   { background: #2d3348; }
+    .dot-error  { background: #ef4444; box-shadow: 0 0 8px rgba(239,68,68,0.5); }
 
-    /* ── Metric cards ─────────────────────────────────────────── */
-    .metric-card {
-        background: rgba(30, 30, 50, 0.7);
-        border: 1px solid rgba(99, 102, 241, 0.2);
-        border-radius: 12px;
-        padding: 1rem 1.2rem;
-        text-align: center;
+    /* ── Buttons ── */
+    .stButton > button {
+        background: transparent !important;
+        border: 1px solid rgba(255,255,255,0.08) !important;
+        border-radius: 10px !important;
+        color: #8892a4 !important;
+        font-weight: 600 !important;
+        font-size: 0.82rem !important;
+        padding: 0.55rem 1.2rem !important;
+        transition: all 0.25s ease !important;
+        letter-spacing: 0.02em;
     }
-    .metric-card .value {
-        font-size: 1.8rem;
-        font-weight: 800;
-        color: #e2e8f0;
+    .stButton > button:hover {
+        border-color: rgba(16, 185, 129, 0.5) !important;
+        color: #10b981 !important;
+        background: rgba(16, 185, 129, 0.06) !important;
+        box-shadow: 0 0 20px rgba(16, 185, 129, 0.08) !important;
     }
-    .metric-card .label {
-        font-size: 0.78rem;
-        color: #94a3b8;
-        margin-top: 0.3rem;
+    /* Start button special — green filled */
+    div[data-testid="column"]:first-child .stButton > button {
+        background: linear-gradient(135deg, #10b981, #059669) !important;
+        border: none !important;
+        color: #ffffff !important;
+        box-shadow: 0 4px 15px rgba(16, 185, 129, 0.25) !important;
     }
-
-    /* ── Alert cards ──────────────────────────────────────────── */
-    .alert-card {
-        padding: 0.8rem 1rem;
-        border-radius: 10px;
-        margin-bottom: 0.5rem;
-        font-size: 0.85rem;
+    div[data-testid="column"]:first-child .stButton > button:hover {
+        box-shadow: 0 6px 25px rgba(16, 185, 129, 0.4) !important;
+        transform: translateY(-1px);
     }
-    .alert-card.critical {
-        background: rgba(239, 68, 68, 0.15);
-        border-left: 4px solid #ef4444;
-        color: #fca5a5;
-    }
-    .alert-card.warning {
-        background: rgba(245, 158, 11, 0.15);
-        border-left: 4px solid #f59e0b;
-        color: #fcd34d;
+    div[data-testid="column"]:first-child .stButton > button:disabled {
+        background: #1a1a2e !important;
+        color: #3d4559 !important;
+        box-shadow: none !important;
     }
 
-    /* ── Section headers ─────────────────────────────────────── */
-    .section-header {
-        font-size: 1.1rem;
-        font-weight: 700;
-        color: #c4b5fd;
-        margin: 1.2rem 0 0.6rem 0;
+    /* ── Glass Card ── */
+    .glass-card {
+        background: #0c0c14;
+        border: 1px solid rgba(255,255,255,0.04);
+        border-radius: 16px;
+        padding: 1.4rem;
+        margin-bottom: 0.8rem;
+    }
+    .glass-card:hover {
+        border-color: rgba(16,185,129,0.12);
+    }
+
+    /* ── Section Headers ── */
+    .sec-head {
         display: flex;
         align-items: center;
         gap: 0.5rem;
+        font-size: 0.78rem;
+        font-weight: 700;
+        color: #5a6478;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        margin-bottom: 0.9rem;
+        padding-bottom: 0.5rem;
+        border-bottom: 1px solid rgba(255,255,255,0.03);
+    }
+    .sec-head .sec-icon {
+        font-size: 0.9rem;
     }
 
-    /* ── Recommendation chip ─────────────────────────────────── */
-    .rec-chip {
-        background: rgba(6, 182, 212, 0.12);
-        border: 1px solid rgba(6, 182, 212, 0.3);
-        border-radius: 8px;
-        padding: 0.6rem 1rem;
-        margin-bottom: 0.4rem;
+    /* ── Metric Cards ── */
+    .metric-grid {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 0.7rem;
+        margin-bottom: 1rem;
+    }
+    .metric-box {
+        background: #0f0f1a;
+        border: 1px solid rgba(255,255,255,0.04);
+        border-radius: 14px;
+        padding: 1rem 1rem;
+        text-align: center;
+        transition: border-color 0.3s, box-shadow 0.3s;
+    }
+    .metric-box:hover {
+        border-color: rgba(16,185,129,0.2);
+        box-shadow: 0 0 20px rgba(16,185,129,0.05);
+    }
+    .metric-box .m-val {
+        font-size: 1.7rem;
+        font-weight: 800;
+        color: #e2e8f0;
+        line-height: 1.2;
+    }
+    .metric-box .m-lbl {
+        font-size: 0.68rem;
+        color: #4a5568;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        margin-top: 0.3rem;
+    }
+    .metric-box.accent .m-val {
+        color: #10b981;
+    }
+
+    /* ── Product Row ── */
+    .prod-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 0.6rem 0.8rem;
+        border-radius: 10px;
+        margin-bottom: 0.35rem;
+        background: #0f0f1a;
+        border: 1px solid rgba(255,255,255,0.03);
+        transition: all 0.2s;
+    }
+    .prod-row:hover {
+        border-color: rgba(16,185,129,0.15);
+        background: #101020;
+    }
+    .prod-row .prod-name {
         font-size: 0.82rem;
+        font-weight: 600;
+        color: #c9d1d9;
+    }
+    .prod-row .prod-meta {
+        display: flex;
+        align-items: center;
+        gap: 1rem;
+    }
+    .prod-row .prod-count {
+        font-size: 0.85rem;
+        font-weight: 700;
+        color: #e2e8f0;
+        min-width: 30px;
+        text-align: right;
+    }
+    .prod-row .prod-rate {
+        font-size: 0.7rem;
+        color: #4a5568;
+        font-weight: 500;
+    }
+    .prod-row .prod-badge {
+        font-size: 0.6rem;
+        font-weight: 700;
+        padding: 2px 8px;
+        border-radius: 6px;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+    }
+    .badge-ok       { background: rgba(16,185,129,0.12); color: #10b981; }
+    .badge-low      { background: rgba(245,158,11,0.12); color: #f59e0b; }
+    .badge-urgent   { background: rgba(239,68,68,0.12);  color: #ef4444; }
+    .badge-high     { background: rgba(99,102,241,0.12); color: #818cf8; }
+
+    /* ── Alert Cards ── */
+    .alert-row {
+        display: flex;
+        align-items: flex-start;
+        gap: 0.7rem;
+        padding: 0.75rem 1rem;
+        border-radius: 12px;
+        margin-bottom: 0.4rem;
+        font-size: 0.8rem;
+        line-height: 1.5;
+    }
+    .alert-row.crit {
+        background: rgba(239,68,68,0.06);
+        border: 1px solid rgba(239,68,68,0.12);
+        color: #fca5a5;
+    }
+    .alert-row.warn {
+        background: rgba(245,158,11,0.06);
+        border: 1px solid rgba(245,158,11,0.12);
+        color: #fcd34d;
+    }
+    .alert-row .alert-icon { font-size: 1rem; flex-shrink: 0; }
+    .alert-row .alert-body { flex: 1; }
+    .alert-row .alert-title {
+        font-weight: 700;
+        color: #e2e8f0;
+        font-size: 0.82rem;
+    }
+    .alert-row .alert-detail {
+        font-size: 0.72rem;
+        opacity: 0.7;
+        margin-top: 2px;
+    }
+    .alert-row .alert-action {
+        font-size: 0.72rem;
+        font-weight: 600;
+        margin-top: 4px;
+        color: inherit;
+    }
+
+    /* ── Recommendation Chips ── */
+    .rec-row {
+        padding: 0.65rem 1rem;
+        border-radius: 10px;
+        margin-bottom: 0.35rem;
+        background: rgba(6,182,212,0.04);
+        border: 1px solid rgba(6,182,212,0.08);
+        font-size: 0.78rem;
         color: #67e8f9;
+        line-height: 1.5;
+    }
+    .rec-row .rec-item {
+        font-weight: 700;
+        color: #a7f3d0;
+    }
+    .rec-row .rec-detail {
+        color: #4a5568;
+        font-size: 0.72rem;
     }
 
-    /* ── Sidebar styling ─────────────────────────────────────── */
-    section[data-testid="stSidebar"] {
-        background: rgba(15, 15, 30, 0.95);
+    /* ── Camera Placeholder ── */
+    .cam-placeholder {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        height: 450px;
+        background: #0c0c14;
+        border: 1px dashed rgba(255,255,255,0.06);
+        border-radius: 16px;
+        color: #2d3348;
     }
-    section[data-testid="stSidebar"] .stMarkdown h3 {
-        color: #a78bfa;
+    .cam-placeholder .cam-icon {
+        font-size: 3rem;
+        margin-bottom: 1rem;
+        opacity: 0.5;
+    }
+    .cam-placeholder .cam-title {
+        font-size: 1rem;
+        font-weight: 700;
+        color: #3d4559;
+        margin-bottom: 0.3rem;
+    }
+    .cam-placeholder .cam-sub {
+        font-size: 0.8rem;
+        color: #2d3348;
+    }
+    .cam-placeholder .cam-sub strong {
+        color: #10b981;
     }
 
-    /* ── Hide Streamlit menu & footer ─────────────────────────  */
-    #MainMenu {visibility: hidden;}
-    footer {visibility: hidden;}
+    /* ── Data placeholder ── */
+    .data-placeholder {
+        padding: 3rem 2rem;
+        text-align: center;
+        color: #2d3348;
+    }
+    .data-placeholder .dp-icon { font-size: 2.5rem; margin-bottom: 0.6rem; opacity: 0.4; }
+    .data-placeholder .dp-text { font-size: 0.85rem; color: #3d4559; line-height: 1.6; }
+
+    /* ── Footer stats ── */
+    .footer-stats {
+        font-size: 0.68rem;
+        color: #2d3348;
+        text-align: center;
+        padding: 0.6rem 0;
+        border-top: 1px solid rgba(255,255,255,0.03);
+        margin-top: 0.5rem;
+        letter-spacing: 0.02em;
+    }
+
+    /* ── Feed image rounding ── */
+    .stImage img {
+        border-radius: 14px !important;
+    }
+
+    /* ── Sidebar brand ── */
+    .sidebar-brand {
+        display: flex;
+        align-items: center;
+        gap: 0.6rem;
+        margin-bottom: 1.5rem;
+        padding-bottom: 1rem;
+        border-bottom: 1px solid rgba(255,255,255,0.04);
+    }
+    .sidebar-brand .sb-logo {
+        width: 32px; height: 32px;
+        background: linear-gradient(135deg, #10b981, #059669);
+        border-radius: 10px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 1rem;
+    }
+    .sidebar-brand .sb-name {
+        font-size: 1.05rem;
+        font-weight: 800;
+        color: #e2e8f0;
+        letter-spacing: -0.02em;
+    }
+    .sidebar-brand .sb-tag {
+        font-size: 0.6rem;
+        color: #10b981;
+        font-weight: 600;
+        background: rgba(16,185,129,0.1);
+        padding: 1px 6px;
+        border-radius: 4px;
+        margin-left: 4px;
+    }
+
+    /* ═══ Streamlit element overrides ═══ */
+    .stAlert { border-radius: 12px !important; }
+    div[data-testid="stMetricValue"] { color: #e2e8f0 !important; }
+    .stCaption { color: #2d3348 !important; }
+
+    /* Toggle styling */
+    .st-emotion-cache-1p2iens { /* toggle track */
+        background-color: #1a1a2e !important;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -172,25 +510,23 @@ st.markdown("""
 # ═══════════════════════════════════════════════════════════════════════════
 # SESSION STATE INITIALISATION
 # ═══════════════════════════════════════════════════════════════════════════
-# Using session_state for ALL mutable state prevents auto-scrolling
-# and ensures the UI stays stable across Streamlit reruns.
 
 def _init_session_state():
     """Initialise all session_state keys exactly once."""
     defaults = {
-        "running":        False,     # Is monitoring active?
-        "camera_type":    "Device",  # "Device" or "IP Camera"
-        "device_index":   0,         # Camera index (0, 1, 2)
+        "running":        False,
+        "camera_type":    "Device",
+        "device_index":   0,
         "ip_url":         "http://192.168.0.101:4747/video",
-        "confidence":     0.45,      # YOLO confidence threshold
-        "detection_on":   True,      # Toggle detection overlay
+        "confidence":     0.45,
+        "detection_on":   True,
         "grid_rows":      3,
         "grid_cols":      5,
-        "detector":       None,      # ProductDetector singleton
-        "shelf_camera":   None,      # ShelfCamera instance
-        "fps":            0.0,       # Current FPS
+        "detector":       None,
+        "shelf_camera":   None,
+        "fps":            0.0,
         "frame_count":    0,
-        "last_status":    "idle",    # idle | streaming | error
+        "last_status":    "idle",
         "error_msg":      "",
     }
     for key, val in defaults.items():
@@ -207,7 +543,7 @@ _init_session_state()
 def get_detector() -> ProductDetector:
     """Return the singleton ProductDetector (loaded once, cached in session_state)."""
     if st.session_state.detector is None:
-        with st.spinner("🔄 Loading YOLO model (first time may take a moment)..."):
+        with st.spinner("Loading YOLOv8 model..."):
             st.session_state.detector = ProductDetector(
                 confidence=st.session_state.confidence
             )
@@ -215,11 +551,7 @@ def get_detector() -> ProductDetector:
 
 
 def get_camera_source():
-    """
-    Return the camera source based on user selection.
-    - Device: integer index (0, 1, 2)
-    - IP Camera: URL string
-    """
+    """Return the camera source based on user selection."""
     if st.session_state.camera_type == "Device":
         return st.session_state.device_index
     else:
@@ -230,8 +562,7 @@ def build_shelf_camera(source) -> ShelfCamera:
     """Create a fresh ShelfCamera instance with current settings."""
     detector = get_detector()
     detector.set_confidence(st.session_state.confidence)
-
-    shelf = ShelfCamera(
+    return ShelfCamera(
         name="Main Shelf",
         source=source,
         detector=detector,
@@ -242,7 +573,6 @@ def build_shelf_camera(source) -> ShelfCamera:
         buffer_size=5,
         stock_threshold=5,
     )
-    return shelf
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -250,13 +580,10 @@ def build_shelf_camera(source) -> ShelfCamera:
 # ═══════════════════════════════════════════════════════════════════════════
 
 def _on_start():
-    """Called when the Start Monitoring button is pressed."""
+    """Called when Start Monitoring is pressed."""
     source = get_camera_source()
-
-    # Build or reuse shelf camera
     shelf = build_shelf_camera(source)
     st.session_state.shelf_camera = shelf
-
     ok = shelf.start_camera()
     if ok:
         st.session_state.running = True
@@ -269,7 +596,7 @@ def _on_start():
 
 
 def _on_stop():
-    """Called when the Stop Monitoring button is pressed."""
+    """Called when Stop Monitoring is pressed."""
     shelf = st.session_state.shelf_camera
     if shelf is not None:
         shelf.stop_camera()
@@ -279,14 +606,23 @@ def _on_stop():
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# SIDEBAR — Camera Selection & Settings
+# SIDEBAR
 # ═══════════════════════════════════════════════════════════════════════════
 
 with st.sidebar:
-    st.markdown("### 🎛️ Camera Settings")
-    st.markdown("---")
+    # Brand
+    st.markdown("""
+    <div class="sidebar-brand">
+        <div class="sb-logo">🛒</div>
+        <div>
+            <span class="sb-name">ShelfAI</span>
+            <span class="sb-tag">PRO</span>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
 
-    # Camera type selector
+    st.markdown("### 📷 Camera")
+
     cam_type = st.selectbox(
         "Camera Type",
         options=["Device", "IP Camera"],
@@ -296,20 +632,19 @@ with st.sidebar:
     )
     st.session_state.camera_type = cam_type
 
-    # Conditional input based on camera type
     if cam_type == "Device":
         dev_idx = st.selectbox(
-            "Camera Index",
+            "Device Index",
             options=[0, 1, 2],
             index=st.session_state.device_index,
             key="sidebar_dev_idx",
-            help="0 = Laptop camera, 1-2 = USB cameras",
+            help="0 = Laptop webcam · 1-2 = USB cameras",
             disabled=st.session_state.running,
         )
         st.session_state.device_index = dev_idx
     else:
         ip_url = st.text_input(
-            "Camera URL",
+            "Stream URL",
             value=st.session_state.ip_url,
             key="sidebar_ip_url",
             help="e.g. http://192.168.0.101:4747/video",
@@ -318,43 +653,40 @@ with st.sidebar:
         st.session_state.ip_url = ip_url
 
     st.markdown("---")
-    st.markdown("### ⚙️ Detection Settings")
+    st.markdown("### 🎯 Detection")
 
-    # Confidence threshold slider
     conf = st.slider(
-        "Confidence Threshold",
-        min_value=0.1,
+        "Confidence",
+        min_value=0.10,
         max_value=0.95,
         value=st.session_state.confidence,
         step=0.05,
         key="sidebar_confidence",
-        help="Minimum detection confidence",
+        help="Minimum detection confidence threshold",
     )
     st.session_state.confidence = conf
-    # Update detector confidence in real-time if it exists
     if st.session_state.detector is not None:
         st.session_state.detector.set_confidence(conf)
 
-    # Detection toggle
     det_on = st.toggle(
-        "Detection Overlay",
+        "Bounding Boxes",
         value=st.session_state.detection_on,
         key="sidebar_det_toggle",
-        help="Show/hide bounding boxes on the feed",
+        help="Show / hide detection overlay on feed",
     )
     st.session_state.detection_on = det_on
 
     st.markdown("---")
-    st.markdown("### 📐 Grid Settings")
+    st.markdown("### 📐 Grid")
 
     grid_r = st.number_input(
-        "Grid Rows", min_value=1, max_value=10,
+        "Rows", min_value=1, max_value=10,
         value=st.session_state.grid_rows,
         key="sidebar_grid_rows",
         disabled=st.session_state.running,
     )
     grid_c = st.number_input(
-        "Grid Columns", min_value=1, max_value=10,
+        "Columns", min_value=1, max_value=10,
         value=st.session_state.grid_cols,
         key="sidebar_grid_cols",
         disabled=st.session_state.running,
@@ -362,72 +694,80 @@ with st.sidebar:
     st.session_state.grid_rows = grid_r
     st.session_state.grid_cols = grid_c
 
+    # Sidebar footer
+    st.markdown("---")
+    st.markdown(
+        "<p style='text-align:center;font-size:0.65rem;color:#2d3348;'>"
+        "ShelfAI v2.0 · YOLOv8 · GPU Accelerated</p>",
+        unsafe_allow_html=True,
+    )
+
 
 # ═══════════════════════════════════════════════════════════════════════════
-# MAIN AREA — Title + Status + Controls + Feed + Inventory
+# MAIN CONTENT — Hero + Status + Controls + Feed + Inventory
 # ═══════════════════════════════════════════════════════════════════════════
 
-# ── Title ─────────────────────────────────────────────────────────────────
-st.markdown('<div class="main-title">🔍 AI Shelf Monitor</div>', unsafe_allow_html=True)
+# ── Hero Title ────────────────────────────────────────────────────────────
 st.markdown(
-    '<div class="sub-title">Real-time inventory tracking powered by YOLOv8</div>',
+    '<div class="hero-title">Intelligent <span class="accent">Shelf Monitor</span></div>',
+    unsafe_allow_html=True,
+)
+st.markdown(
+    '<div class="hero-sub">Real-time inventory tracking powered by YOLOv8 · '
+    'Instant detection, optimized insights, and premium analytics.</div>',
     unsafe_allow_html=True,
 )
 
-# ── Status Bar ────────────────────────────────────────────────────────────
+# ── Status Strip ──────────────────────────────────────────────────────────
 status = st.session_state.last_status
-dot_class = {"idle": "idle", "streaming": "live", "error": "error"}.get(status, "idle")
-status_label = {"idle": "Idle", "streaming": "🟢 Live", "error": "❌ Error"}.get(status, "Idle")
+dot_cls = {"idle": "dot-idle", "streaming": "dot-live", "error": "dot-error"}.get(status, "dot-idle")
+status_txt = {"idle": "Idle", "streaming": "Streaming", "error": "Error"}.get(status, "Idle")
 
-source_label = (
+src_label = (
     f"Camera {st.session_state.device_index}"
     if st.session_state.camera_type == "Device"
-    else st.session_state.ip_url
+    else st.session_state.ip_url[:35]
 )
-fps_label = f"{st.session_state.fps:.1f} FPS" if st.session_state.running else "—"
+fps_txt = f"{st.session_state.fps:.1f}" if st.session_state.running else "—"
 
 st.markdown(f"""
-<div class="status-bar">
-    <span><span class="status-dot {dot_class}"></span> {status_label}</span>
-    <span>📷 {source_label}</span>
-    <span>⚡ {fps_label}</span>
-    <span>🎯 Conf: {st.session_state.confidence:.0%}</span>
+<div class="status-strip">
+    <div class="pill"><span class="dot {dot_cls}"></span> {status_txt}</div>
+    <div class="pill">📷 {src_label}</div>
+    <div class="pill">⚡ {fps_txt} FPS</div>
+    <div class="pill">🎯 {st.session_state.confidence:.0%}</div>
+    <div class="pill">📐 {st.session_state.grid_rows}×{st.session_state.grid_cols}</div>
 </div>
 """, unsafe_allow_html=True)
 
 # ── Start / Stop Buttons ─────────────────────────────────────────────────
-col_start, col_stop, col_spacer = st.columns([1, 1, 4])
-
-with col_start:
+col_s, col_x, col_sp = st.columns([1, 1, 5])
+with col_s:
     st.button(
-        "▶️ Start Monitoring",
+        "▶  Start Monitoring",
         on_click=_on_start,
         disabled=st.session_state.running,
         use_container_width=True,
         key="btn_start",
     )
-
-with col_stop:
+with col_x:
     st.button(
-        "⏹️ Stop Monitoring",
+        "■  Stop",
         on_click=_on_stop,
         disabled=not st.session_state.running,
         use_container_width=True,
         key="btn_stop",
     )
 
-# ── Error display ────────────────────────────────────────────────────────
+# ── Error Banner ─────────────────────────────────────────────────────────
 if st.session_state.error_msg:
-    st.error(f"❌ {st.session_state.error_msg}")
+    st.error(f"❌  {st.session_state.error_msg}")
 
-# ── Live Feed + Inventory Panel ──────────────────────────────────────────
-# Two columns: left = camera feed, right = inventory data
+# ── Two-Column Layout: Feed | Data ──────────────────────────────────────
 col_feed, col_data = st.columns([3, 2], gap="medium")
 
-# Placeholders for in-place updates (prevents DOM growth / scrolling)
 with col_feed:
     feed_placeholder = st.empty()
-
 with col_data:
     data_placeholder = st.empty()
 
@@ -437,115 +777,152 @@ with col_data:
 # ═══════════════════════════════════════════════════════════════════════════
 
 def render_inventory_panel(container, shelf: ShelfCamera):
-    """
-    Render the inventory insights panel inside a Streamlit container.
-    Uses shelf.get_state() for all data to avoid thread-safety issues.
-    """
+    """Render the premium inventory panel inside a container."""
     state = shelf.get_state()
 
     with container.container():
-        # ── Summary Metrics ──────────────────────────────────────
-        st.markdown('<div class="section-header">📊 Dashboard</div>', unsafe_allow_html=True)
+        # ── Metrics Grid ─────────────────────────────────────────
+        st.markdown("""
+        <div class="sec-head">
+            <span class="sec-icon">📊</span> Dashboard Overview
+        </div>
+        """, unsafe_allow_html=True)
 
-        m1, m2, m3 = st.columns(3)
-        with m1:
-            st.markdown(f"""
-            <div class="metric-card">
-                <div class="value">{state['total_stock']}</div>
-                <div class="label">Total Items</div>
+        total = state["total_stock"]
+        classes = state["num_classes"]
+        snaps = state["snapshot_count"]
+        low = state.get("low_count", 0)
+
+        st.markdown(f"""
+        <div class="metric-grid">
+            <div class="metric-box accent">
+                <div class="m-val">{total}</div>
+                <div class="m-lbl">Total Items</div>
             </div>
-            """, unsafe_allow_html=True)
-        with m2:
-            st.markdown(f"""
-            <div class="metric-card">
-                <div class="value">{state['num_classes']}</div>
-                <div class="label">Product Types</div>
+            <div class="metric-box">
+                <div class="m-val">{classes}</div>
+                <div class="m-lbl">Product Types</div>
             </div>
-            """, unsafe_allow_html=True)
-        with m3:
-            st.markdown(f"""
-            <div class="metric-card">
-                <div class="value">{state['snapshot_count']}</div>
-                <div class="label">Snapshots</div>
+            <div class="metric-box">
+                <div class="m-val">{snaps}</div>
+                <div class="m-lbl">Snapshots</div>
             </div>
-            """, unsafe_allow_html=True)
+        </div>
+        """, unsafe_allow_html=True)
 
         # ── Current Stock ────────────────────────────────────────
-        st.markdown('<div class="section-header">📦 Current Stock</div>', unsafe_allow_html=True)
-
         products = state.get("products", [])
         if products:
+            st.markdown("""
+            <div class="sec-head">
+                <span class="sec-icon">📦</span> Current Stock
+            </div>
+            """, unsafe_allow_html=True)
+
+            html_rows = ""
             for p in products:
-                status_icon = {
-                    "ok": "🟢", "low": "🟡", "urgent": "🔴", "high": "🔥"
-                }.get(p["status"], "⚪")
-                rate_str = f" · {p['rate']}/hr" if p["rate"] > 0 else ""
-                st.markdown(
-                    f"&nbsp;&nbsp;{status_icon} **{p['name']}** — "
-                    f"`{p['stock']}` units{rate_str}",
-                    unsafe_allow_html=True,
-                )
-        else:
-            st.caption("No items detected yet. Start monitoring to see stock data.")
+                badge_cls = {
+                    "ok": "badge-ok", "low": "badge-low",
+                    "urgent": "badge-urgent", "high": "badge-high",
+                }.get(p["status"], "badge-ok")
+                badge_txt = p["status"].upper()
+                rate_str = f"{p['rate']}/hr" if p["rate"] > 0 else "—"
+
+                html_rows += f"""
+                <div class="prod-row">
+                    <span class="prod-name">{p['name']}</span>
+                    <div class="prod-meta">
+                        <span class="prod-rate">{rate_str}</span>
+                        <span class="prod-count">{p['stock']}</span>
+                        <span class="prod-badge {badge_cls}">{badge_txt}</span>
+                    </div>
+                </div>
+                """
+            st.markdown(html_rows, unsafe_allow_html=True)
 
         # ── Recent Sales ─────────────────────────────────────────
         sales = state.get("latest_sales", {})
         if sales:
-            st.markdown('<div class="section-header">🔄 Recent Sales</div>', unsafe_allow_html=True)
+            st.markdown("""
+            <div class="sec-head" style="margin-top:1rem;">
+                <span class="sec-icon">🔄</span> Recent Sales
+            </div>
+            """, unsafe_allow_html=True)
+
+            sales_html = ""
             for item, qty in sales.items():
-                st.markdown(f"&nbsp;&nbsp;🛒 **{item}** — {qty} sold")
+                sales_html += f"""
+                <div class="prod-row">
+                    <span class="prod-name">🛒 {item}</span>
+                    <span class="prod-count" style="color:#f59e0b;">-{qty}</span>
+                </div>
+                """
+            st.markdown(sales_html, unsafe_allow_html=True)
 
         # ── Alerts ───────────────────────────────────────────────
         alerts = state.get("alerts", [])
         if alerts:
-            st.markdown('<div class="section-header">🔔 Alerts</div>', unsafe_allow_html=True)
+            st.markdown("""
+            <div class="sec-head" style="margin-top:1rem;">
+                <span class="sec-icon">🔔</span> Alerts
+            </div>
+            """, unsafe_allow_html=True)
+
+            alerts_html = ""
             for a in alerts:
                 sev = a.get("severity", "warning")
-                css_class = "critical" if sev == "critical" else "warning"
+                cls = "crit" if sev == "critical" else "warn"
                 icon = "🚨" if sev == "critical" else "⚠️"
-                st.markdown(f"""
-                <div class="alert-card {css_class}">
-                    {icon} <strong>{a['item']}</strong> — Stock: {a['stock']}
-                    &nbsp;|&nbsp; Rate: {a['rate']}/hr
-                    &nbsp;|&nbsp; Depletes: {a.get('time_to_empty', 'N/A')}
-                    <br><em>{a['action']}</em>
+                alerts_html += f"""
+                <div class="alert-row {cls}">
+                    <span class="alert-icon">{icon}</span>
+                    <div class="alert-body">
+                        <div class="alert-title">{a['item']}</div>
+                        <div class="alert-detail">
+                            Stock: {a['stock']} · Rate: {a['rate']}/hr · Depletes: {a.get('time_to_empty', 'N/A')}
+                        </div>
+                        <div class="alert-action">→ {a['action']}</div>
+                    </div>
                 </div>
-                """, unsafe_allow_html=True)
+                """
+            st.markdown(alerts_html, unsafe_allow_html=True)
 
         # ── Recommendations ──────────────────────────────────────
         recs = state.get("recommendations", [])
         if recs:
-            st.markdown('<div class="section-header">📋 Recommendations</div>', unsafe_allow_html=True)
-            for r in recs:
-                st.markdown(f"""
-                <div class="rec-chip">
-                    💡 <strong>{r['item']}</strong> — {r['reason']}
-                    <br>{r['suggestion']}
-                </div>
-                """, unsafe_allow_html=True)
+            st.markdown("""
+            <div class="sec-head" style="margin-top:1rem;">
+                <span class="sec-icon">💡</span> Recommendations
+            </div>
+            """, unsafe_allow_html=True)
 
-        # ── Frame Stats ──────────────────────────────────────────
-        st.markdown("---")
-        st.caption(
-            f"Frames: {state['frame_count']} · "
-            f"Snapshots: {state['snapshot_count']} · "
-            f"Buffer: {state.get('buffer_fill', 0)} · "
-            f"Grid: {state['rows']}×{state['cols']}"
-        )
+            recs_html = ""
+            for r in recs:
+                recs_html += f"""
+                <div class="rec-row">
+                    <span class="rec-item">{r['item']}</span> — {r['reason']}
+                    <br><span class="rec-detail">{r['suggestion']}</span>
+                </div>
+                """
+            st.markdown(recs_html, unsafe_allow_html=True)
+
+        # ── Footer Stats ─────────────────────────────────────────
+        st.markdown(f"""
+        <div class="footer-stats">
+            Frames: {state['frame_count']} · Snapshots: {state['snapshot_count']}
+            · Buffer: {state.get('buffer_fill', 0)} · Grid: {state['rows']}×{state['cols']}
+        </div>
+        """, unsafe_allow_html=True)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
 # MAIN MONITORING LOOP
 # ═══════════════════════════════════════════════════════════════════════════
-# This runs ONLY when st.session_state.running is True.
-# The loop reads JPEG frames from the ShelfCamera's capture thread
-# (which runs in a background thread) and displays them in-place
-# using st.empty() — this prevents DOM growth and auto-scrolling.
 
 if st.session_state.running and st.session_state.shelf_camera is not None:
     shelf = st.session_state.shelf_camera
 
-    # Show initial "connecting" message
+    # Handle connection loss
     if not shelf.running:
         feed_placeholder.info("📡 Connecting to camera...")
         time.sleep(1)
@@ -555,23 +932,18 @@ if st.session_state.running and st.session_state.shelf_camera is not None:
             st.session_state.error_msg = shelf.error_msg or "Camera connection lost"
             st.rerun()
 
-    # FPS tracking
     fps_window = []
     refresh_counter = 0
 
-    # Main frame loop — updates placeholders in-place
     while st.session_state.running and shelf.running:
         t0 = time.time()
 
-        # Read the latest JPEG from the camera thread
         with shelf.lock:
             jpg_bytes = shelf.latest_jpg
 
         if jpg_bytes is not None:
-            # Decode JPEG → numpy → RGB for Streamlit
             arr = np.frombuffer(jpg_bytes, dtype=np.uint8)
             frame = cv2.imdecode(arr, cv2.IMREAD_COLOR)
-
             if frame is not None:
                 frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                 feed_placeholder.image(
@@ -580,14 +952,19 @@ if st.session_state.running and st.session_state.shelf_camera is not None:
                     use_container_width=True,
                 )
         else:
-            feed_placeholder.info("⏳ Waiting for camera frames...")
+            feed_placeholder.markdown("""
+            <div class="cam-placeholder" style="height:300px;">
+                <div class="cam-icon">📡</div>
+                <div class="cam-title">Waiting for frames...</div>
+            </div>
+            """, unsafe_allow_html=True)
 
-        # Update inventory panel every 10 frames (~0.5s) to reduce flicker
+        # Update data panel every ~0.5s
         refresh_counter += 1
         if refresh_counter % 10 == 0:
             render_inventory_panel(data_placeholder, shelf)
 
-        # FPS calculation
+        # FPS
         elapsed = time.time() - t0
         fps_window.append(elapsed)
         if len(fps_window) > 20:
@@ -595,11 +972,10 @@ if st.session_state.running and st.session_state.shelf_camera is not None:
         avg = sum(fps_window) / len(fps_window) if fps_window else 1
         st.session_state.fps = 1.0 / max(avg, 0.001)
 
-        # Sleep to maintain smooth ~20 FPS display rate
         sleep_time = max(0.02, 0.05 - elapsed)
         time.sleep(sleep_time)
 
-    # Camera stopped externally (e.g., disconnected)
+    # External camera stop
     if st.session_state.running and not shelf.running:
         st.session_state.running = False
         st.session_state.last_status = "error"
@@ -607,38 +983,22 @@ if st.session_state.running and st.session_state.shelf_camera is not None:
         st.rerun()
 
 else:
-    # ── Idle state — show placeholder ────────────────────────────────
+    # ── Idle state placeholders ──────────────────────────────────────
     with col_feed:
         feed_placeholder.markdown("""
-        <div style="
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            height: 400px;
-            background: rgba(20, 20, 40, 0.5);
-            border: 2px dashed rgba(99, 102, 241, 0.3);
-            border-radius: 16px;
-            color: #64748b;
-        ">
-            <div style="font-size: 3rem; margin-bottom: 0.8rem;">📷</div>
-            <div style="font-size: 1.1rem; font-weight: 600;">No Camera Active</div>
-            <div style="font-size: 0.85rem; margin-top: 0.3rem;">
-                Select a camera source and click <strong>Start Monitoring</strong>
-            </div>
+        <div class="cam-placeholder">
+            <div class="cam-icon">📷</div>
+            <div class="cam-title">No Camera Active</div>
+            <div class="cam-sub">Select a source and click <strong>Start Monitoring</strong></div>
         </div>
         """, unsafe_allow_html=True)
 
     with col_data:
         data_placeholder.markdown("""
-        <div style="
-            padding: 2rem;
-            text-align: center;
-            color: #64748b;
-        ">
-            <div style="font-size: 2rem; margin-bottom: 0.5rem;">📊</div>
-            <div style="font-size: 0.95rem;">
-                Inventory data will appear here<br>once monitoring starts.
+        <div class="data-placeholder">
+            <div class="dp-icon">📊</div>
+            <div class="dp-text">
+                Inventory insights will appear here<br>once monitoring begins.
             </div>
         </div>
         """, unsafe_allow_html=True)
