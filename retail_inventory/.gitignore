@@ -1,21 +1,35 @@
 # Python
 __pycache__/
-*.pyc
-*.pyo
+*.py[cod]
+*.egg-info/
+dist/
+build/
+venv/
+.venv/
 
-# YOLO model weights (too large for GitHub)
+# YOLO models
 *.pt
 
-# Database
-inventory.db
+# Data files
+*.db
+*.json
+!backend/requirements.txt
+!frontend/package.json
+!frontend/tailwind.config.js
+!frontend/postcss.config.js
 
-# JSON state
-stock.json
+# Node
+node_modules/
+frontend/node_modules/
 
 # IDE
-.vscode/
 .idea/
+.vscode/settings.json
 
 # OS
-Thumbs.db
 .DS_Store
+Thumbs.db
+
+# Environment
+.env
+.env.local
