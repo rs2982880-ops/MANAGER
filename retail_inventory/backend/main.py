@@ -167,13 +167,8 @@ async def api_info():
     return {"name": "ShelfAI", "version": "3.0.0", "status": "running"}
 
 
-@app.get("/")
-async def root():
-    """Serve frontend if built, otherwise return API info."""
-    _dist = Path(__file__).resolve().parent.parent / "frontend" / "dist" / "index.html"
-    if _dist.is_file():
-        return FileResponse(str(_dist))
-    return {"name": "ShelfAI", "version": "3.0.0", "status": "running"}
+
+
 
 
 CLOUD_MSG = {"ok": False, "message": "AI/Camera not available in cloud mode. Run locally for full features."}
@@ -534,15 +529,48 @@ async def websocket_stream(websocket: WebSocket):
                 }
 
                 # ── Real-time sales persistence to SQLite ──
-                latest_sales = state.get("latest_sales", {})
+                latest_sales   = state.get("latest_sales",   {})
+                latest_restocks = state.get("latest_restocks", {})
                 snap_count = state.get("snapshot_count", 0)
-                if latest_sales and snap_count > _last_logged_snapshot:
+                if snap_count > _last_logged_snapshot:
                     _last_logged_snapshot = snap_count
                     try:
-                        camera_service._db.log_sales(latest_sales)
-                        print(f"[ws] Logged sales to DB: {latest_sales}")
+                        db = camera_service._db
+                        today = __import__("datetime").date.today().isoformat()
+
+                        # Log raw sales events (for history/charts)
+                        if latest_sales:
+                            db.log_sales(latest_sales)
+                            print(f"[ws] Logged sales to DB: {latest_sales}")
+
+                        # ✅ Bridge: also update daily_sales table (Sales Log page)
+                        for item, qty in latest_sales.items():
+                            if qty > 0:
+                                # Get existing quantity for today and add to it
+                                with db._connect() as conn:
+                                    row = conn.execute(
+                                        "SELECT id, quantity FROM daily_sales WHERE date=? AND item_name=?",
+                                        (today, item)
+                                    ).fetchone()
+                                    if row:
+                                        new_qty = row[1] + qty
+                                        conn.execute(
+                                            "UPDATE daily_sales SET quantity=?, updated_at=datetime('now'), notes='Auto-detected by AI' WHERE id=?",
+                                            (new_qty, row[0])
+                                        )
+                                    else:
+                                        conn.execute(
+                                            "INSERT INTO daily_sales (date, item_name, quantity, notes) VALUES (?,?,?,?)",
+                                            (today, item, qty, "Auto-detected by AI")
+                                        )
+
+                        # Log raw restocks
+                        if latest_restocks:
+                            db.log_restocks(latest_restocks)
+                            print(f"[ws] Logged restocks to DB: {latest_restocks}")
+
                     except Exception as e:
-                        print(f"[ws] DB log_sales error: {e}")
+                        print(f"[ws] DB log error: {e}")
 
                 await websocket.send_text(json.dumps(payload))
             else:
@@ -615,15 +643,27 @@ if _FRONTEND_DIST.is_dir():
     # Serve static assets (JS, CSS, images)
     app.mount("/assets", StaticFiles(directory=str(_FRONTEND_DIST / "assets")), name="assets")
 
-    # Catch-all: serve index.html for SPA routing
+    # Catch-all: serve index.html for SPA routing (exclude API and WS paths)
     @app.get("/{path:path}")
     async def serve_spa(path: str):
-        # Try to serve the exact file first
+        # Don't intercept API or WebSocket routes
+        if path.startswith("api/") or path.startswith("ws/") or path.startswith("docs") or path.startswith("openapi"):
+            from fastapi import HTTPException
+            raise HTTPException(status_code=404, detail="Not found")
+        # Root path or empty path → serve index.html
+        if path == "" or path == "/":
+            return FileResponse(str(_FRONTEND_DIST / "index.html"))
+        # Try to serve the exact static file first (e.g. vite.svg)
         file = _FRONTEND_DIST / path
         if file.is_file():
             return FileResponse(str(file))
         # Fallback to index.html for client-side routing
         return FileResponse(str(_FRONTEND_DIST / "index.html"))
+
+else:
+    @app.get("/")
+    async def root_fallback():
+        return {"name": "ShelfAI", "version": "3.0.0", "status": "running", "note": "Frontend not built. Run: cd frontend && npm run build"}
 
 
 # ═══════════════════════════════════════════════════════════════════════════
