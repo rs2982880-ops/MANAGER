@@ -26,7 +26,7 @@ if %errorlevel% neq 0 (
 
 echo  [1/4] Installing Python dependencies...
 cd /d "%~dp0backend"
-pip install -r requirements.txt --quiet >nul 2>&1
+pip install -r requirements.txt -q
 if %errorlevel% neq 0 (
     echo  [WARN] Some pip packages may have failed. Continuing...
 )
@@ -34,13 +34,30 @@ if %errorlevel% neq 0 (
 echo  [2/4] Installing frontend dependencies...
 cd /d "%~dp0frontend"
 if not exist node_modules (
-    call npm install --silent >nul 2>&1
+    echo         Installing node_modules...
+    call npm install --legacy-peer-deps
+    if %errorlevel% neq 0 (
+        echo  [ERROR] npm install failed!
+        pause
+        exit /b 1
+    )
 ) else (
     echo         node_modules exists, skipping...
 )
 
 echo  [3/4] Building frontend...
-call npm run build --silent >nul 2>&1
+call npm run build
+if %errorlevel% neq 0 (
+    echo.
+    echo  [ERROR] Frontend build failed!
+    echo  Try running these manually in the frontend folder:
+    echo    npm install --legacy-peer-deps
+    echo    npm run build
+    echo.
+    pause
+    exit /b 1
+)
+echo  [OK] Frontend built successfully.
 
 echo  [4/4] Starting backend server...
 echo.
