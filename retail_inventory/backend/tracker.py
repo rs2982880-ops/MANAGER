@@ -25,7 +25,7 @@ from typing import Dict, List, Optional, Tuple
 # Constants
 # ======================================================================
 CONFIDENCE_THRESHOLD = 0.5
-DEFAULT_BUFFER_SIZE = 5
+DEFAULT_BUFFER_SIZE = 7
 DISPLACEMENT_RADIUS = 1
 
 
@@ -96,11 +96,13 @@ def _is_true_displacement(
 
 def build_consensus(buffer: List[List[List[str]]]) -> List[List[str]]:
     """
-    Build stable grid from buffer using majority voting.
+    Build stable grid from buffer using sticky majority voting.
 
     For each cell, collect labels across all buffer frames.
-    A label must appear >= ceil(N/2) times to be confirmed.
-    If no label reaches majority, the cell is marked "empty" (unstable).
+    A non-empty label wins if it appears >= ceil(N/2) times.
+    If no non-empty label reaches majority, use the overall most-common
+    label (including empty). This biases toward keeping detected items
+    rather than flickering to empty on brief YOLO misses.
     """
     if not buffer:
         return []
@@ -114,8 +116,22 @@ def build_consensus(buffer: List[List[List[str]]]) -> List[List[str]]:
         for c in range(cols):
             labels = [b[r][c] for b in buffer]
             counts = Counter(labels)
+
+            # Check if any non-empty label reaches majority
+            non_empty = {k: v for k, v in counts.items() if k != "empty"}
+            if non_empty:
+                best_item, best_count = max(non_empty.items(), key=lambda x: x[1])
+                if best_count >= threshold:
+                    grid[r][c] = best_item
+                    continue
+
+            # Fallback: use overall most common (sticky — prefer non-empty on ties)
             most_common, count = counts.most_common(1)[0]
-            grid[r][c] = most_common if count >= threshold else "empty"
+            if most_common != "empty" and count >= 2:
+                grid[r][c] = most_common
+            elif count >= threshold:
+                grid[r][c] = most_common
+
     return grid
 
 
@@ -276,7 +292,7 @@ class SnapshotTracker:
         buffer_size: int = DEFAULT_BUFFER_SIZE,
         occlusion_drop_threshold: float = 0.50,
         system_mode: str = "demo",
-        decision_buffer_size: int = 3,
+        decision_buffer_size: int = 5,
         cooldown_period: float = 15.0,
         visibility_threshold: float = 0.60,
         min_change_threshold: int = 2,

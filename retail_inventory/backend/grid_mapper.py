@@ -82,36 +82,20 @@ class GridMapper:
         self._recalc()
 
     # ------------------------------------------------------------------
-    # Core mapping (legacy — returns string grid)
+    # Core mapping
     # ------------------------------------------------------------------
     def map_detections(self, detections: List[dict]) -> List[List[str]]:
         """
-        Map *detections* to grid cells. Returns string grid for backward compat.
-        """
-        counted = self.map_detections_counted(detections)
-        return [
-            [cell[0] for cell in row]
-            for row in counted
-        ]
+        Map *detections* to grid cells.
 
-    # ------------------------------------------------------------------
-    # Count-aware mapping (NEW — returns (label, count) per cell)
-    # ------------------------------------------------------------------
-    def map_detections_counted(
-        self, detections: List[dict]
-    ) -> List[List[Tuple[str, int]]]:
+        Returns
+        -------
+        2-D list  ``grid[row][col]``  — a class-name string or ``"empty"``.
         """
-        Map detections to grid cells, counting ALL detections per cell.
-
-        Returns 2-D list of (label, count) tuples.
-        - ("empty", 0) for cells with no detections
-        - ("book", 3) for cells with 3 book detections
-        If a cell has mixed labels, the most frequent label wins.
-        """
-        grid: List[List[Tuple[str, int]]] = [
-            [("empty", 0)] * self.cols for _ in range(self.rows)
+        grid: List[List[str]] = [
+            ["empty"] * self.cols for _ in range(self.rows)
         ]
-        # Accumulate ALL detections per cell
+        # Accumulate per-cell candidates so we can pick best confidence
         candidates: List[List[List[dict]]] = [
             [[] for _ in range(self.cols)] for _ in range(self.rows)
         ]
@@ -121,7 +105,7 @@ class GridMapper:
             cx, cy = (x1 + x2) / 2, (y1 + y2) / 2
 
             if not self.shelf.contains(cx, cy):
-                continue
+                continue                       # outside shelf — skip
 
             col = int((cx - self.shelf.x_min) / self.cell_width)
             row = int((cy - self.shelf.y_min) / self.cell_height)
@@ -132,15 +116,9 @@ class GridMapper:
 
         for r in range(self.rows):
             for c in range(self.cols):
-                dets = candidates[r][c]
-                if not dets:
-                    continue
-                # Group by label, pick most frequent
-                from collections import Counter
-                label_counts = Counter(d["class"] for d in dets)
-                best_label = label_counts.most_common(1)[0][0]
-                count = label_counts[best_label]
-                grid[r][c] = (best_label, count)
+                if candidates[r][c]:
+                    best = max(candidates[r][c], key=lambda d: d["confidence"])
+                    grid[r][c] = best["class"]
 
         return grid
 
@@ -158,7 +136,7 @@ class GridMapper:
         return out
 
     def count_items(self, grid: List[List[str]]) -> Dict[str, int]:
-        """Count items per class in a string grid map."""
+        """Count items per class in a grid map."""
         counts: Dict[str, int] = {}
         for row in grid:
             for cell in row:
@@ -173,63 +151,60 @@ class GridMapper:
         return sum(1 for row in grid for c in row if c != "empty")
 
     # ------------------------------------------------------------------
-    # Drawing (handles both string and counted grids)
+    # Drawing
     # ------------------------------------------------------------------
     def draw_grid_overlay(
         self,
         frame: np.ndarray,
-        grid: Optional[List] = None,
+        grid: Optional[List[List[str]]] = None,
     ) -> np.ndarray:
         """
         Draw the shelf region + grid lines + cell status on *frame*.
-        Accepts both string grids and counted grids.
+
+        * Shelf border → cyan
+        * Occupied cells → subtle green tint + label
+        * Empty cells   → no fill (clean look)
         """
         overlay = frame.copy()
         s = self.shelf
 
+        # --- shelf border (subtle) ---
         cv2.rectangle(overlay, (s.x_min, s.y_min), (s.x_max, s.y_max),
-                       (255, 255, 0), 2)
+                       (200, 200, 50), 1)
 
+        # --- grid lines (thin, low contrast) ---
         for i in range(1, self.rows):
             y = s.y_min + int(i * self.cell_height)
-            cv2.line(overlay, (s.x_min, y), (s.x_max, y), (180, 180, 180), 1)
+            cv2.line(overlay, (s.x_min, y), (s.x_max, y), (100, 100, 100), 1)
         for j in range(1, self.cols):
             x = s.x_min + int(j * self.cell_width)
-            cv2.line(overlay, (x, s.y_min), (x, s.y_max), (180, 180, 180), 1)
+            cv2.line(overlay, (x, s.y_min), (x, s.y_max), (100, 100, 100), 1)
 
+        # --- cell colouring (occupied only) ---
         if grid:
             for r in range(min(self.rows, len(grid))):
                 for c in range(min(self.cols, len(grid[0]))):
+                    if grid[r][c] == "empty":
+                        continue  # No fill on empty cells
+
                     x1 = s.x_min + int(c * self.cell_width)
                     y1_c = s.y_min + int(r * self.cell_height)
                     x2 = s.x_min + int((c + 1) * self.cell_width)
                     y2_c = s.y_min + int((r + 1) * self.cell_height)
 
+                    # Clamp to frame bounds
                     fh, fw = frame.shape[:2]
                     x1, x2 = max(0, x1), min(fw, x2)
                     y1_c, y2_c = max(0, y1_c), min(fh, y2_c)
                     if x2 <= x1 or y2_c <= y1_c:
                         continue
 
-                    # Handle both string grid and counted grid
-                    cell = grid[r][c]
-                    if isinstance(cell, tuple):
-                        lbl, cnt = cell
-                    else:
-                        lbl, cnt = cell, (1 if cell != "empty" else 0)
-
                     sub = overlay[y1_c:y2_c, x1:x2]
-                    if lbl == "empty":
-                        tint = np.full_like(sub, (0, 0, 180))
-                        cv2.addWeighted(sub, 0.75, tint, 0.25, 0, sub)
-                    else:
-                        tint = np.full_like(sub, (0, 160, 0))
-                        cv2.addWeighted(sub, 0.75, tint, 0.25, 0, sub)
-                        display = f"{lbl[:8]}x{cnt}" if cnt > 1 else lbl[:10]
-                        cv2.putText(overlay, display, (x1 + 2, y1_c + 14),
-                                    cv2.FONT_HERSHEY_SIMPLEX, 0.35,
-                                    (255, 255, 255), 1, cv2.LINE_AA)
+                    tint = np.full_like(sub, (0, 140, 0))     # subtle green
+                    cv2.addWeighted(sub, 0.85, tint, 0.15, 0, sub)
+                    lbl = grid[r][c][:10]
+                    cv2.putText(overlay, lbl, (x1 + 2, y1_c + 14),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.35,
+                                (255, 255, 255), 1, cv2.LINE_AA)
 
-        cv2.putText(overlay, "SHELF", (s.x_min + 4, s.y_min - 6),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 0), 1, cv2.LINE_AA)
         return overlay

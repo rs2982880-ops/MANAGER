@@ -40,13 +40,13 @@ class CameraService:
         self._lock = threading.Lock()
 
         # Settings (defaults)
-        self.confidence: float = 0.45
+        self.confidence: float = 0.55
         self.detection_on: bool = True
         self.grid_rows: int = 3
         self.grid_cols: int = 5
         self.region: Tuple[int, int, int, int] = (50, 30, 590, 440)
         self.snap_interval: float = 30.0
-        self.buffer_size: int = 5
+        self.buffer_size: int = 7
         self.stock_threshold: int = 5
 
         # FPS tracking
