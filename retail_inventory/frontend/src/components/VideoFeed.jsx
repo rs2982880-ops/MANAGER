@@ -1,8 +1,8 @@
 /**
  * VideoFeed.jsx — Center panel displaying live camera feed with grid overlay.
  *
- * Receives base64 JPEG frames from the Zustand store (pushed by WebSocket).
- * Updates the <img> src directly — no DOM replacement, no flicker.
+ * Shows a warning overlay when system detects NO_SHELF state
+ * (camera not pointing at a shelf area).
  */
 
 import { useRef, useEffect } from 'react';
@@ -17,8 +17,14 @@ export default function VideoFeed() {
   const gridCols = useStore((s) => s.gridCols);
   const fps = useStore((s) => s.fps);
   const frameCount = useStore((s) => s.frameCount);
+  const alerts = useStore((s) => s.alerts);
 
   const imgRef = useRef(null);
+
+  // Check for NO_SHELF state from backend alerts
+  const noShelf = alerts.some(
+    (a) => a.item === 'SYSTEM' && a.action?.includes('No shelf')
+  );
 
   // Direct src update for zero-flicker rendering
   useEffect(() => {
@@ -61,7 +67,30 @@ export default function VideoFeed() {
         />
 
         {/* Grid Overlay (SVG on top of image) */}
-        <GridOverlay grid={grid} rows={gridRows} cols={gridCols} />
+        {!noShelf && <GridOverlay grid={grid} rows={gridRows} cols={gridCols} />}
+
+        {/* NO SHELF WARNING OVERLAY */}
+        {noShelf && (
+          <div className="absolute inset-0 flex items-center justify-center z-10">
+            <div className="absolute inset-0 bg-black/40 backdrop-blur-[2px]" />
+            <div className="relative flex flex-col items-center gap-3 px-8 py-6 rounded-2xl
+                            bg-dark-800/90 border border-amber-500/30 shadow-2xl
+                            animate-fade-in max-w-sm text-center">
+              <div className="text-4xl">⚠️</div>
+              <h3 className="text-base font-bold text-amber-400">
+                No Shelf Detected
+              </h3>
+              <p className="text-xs text-gray-400 leading-relaxed">
+                The camera doesn't see a shelf with products.
+                Tracking is <span className="text-amber-400 font-semibold">paused</span> to prevent false inventory updates.
+              </p>
+              <div className="mt-1 px-3 py-1.5 rounded-lg bg-amber-500/10 border border-amber-500/20
+                              text-[0.65rem] text-amber-300 font-medium">
+                Adjust camera → point at shelf area
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* FPS Badge */}
         <div className="absolute top-3 left-3 flex items-center gap-2 px-2.5 py-1 rounded-lg bg-black/60 backdrop-blur-sm border border-white/10 text-[0.65rem] font-semibold">
@@ -71,10 +100,17 @@ export default function VideoFeed() {
           <span className="text-gray-400">F#{frameCount}</span>
         </div>
 
-        {/* LIVE badge */}
-        <div className="absolute top-3 right-3 flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-red-500/20 backdrop-blur-sm border border-red-500/30 text-[0.65rem] font-bold text-red-400">
-          <div className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse"></div>
-          LIVE
+        {/* LIVE / NO SHELF badge */}
+        <div className={`absolute top-3 right-3 flex items-center gap-1.5 px-2.5 py-1 rounded-lg
+                         backdrop-blur-sm text-[0.65rem] font-bold ${
+          noShelf
+            ? 'bg-amber-500/20 border border-amber-500/30 text-amber-400'
+            : 'bg-red-500/20 border border-red-500/30 text-red-400'
+        }`}>
+          <div className={`w-1.5 h-1.5 rounded-full animate-pulse ${
+            noShelf ? 'bg-amber-500' : 'bg-red-500'
+          }`}></div>
+          {noShelf ? 'PAUSED' : 'LIVE'}
         </div>
       </div>
     </div>

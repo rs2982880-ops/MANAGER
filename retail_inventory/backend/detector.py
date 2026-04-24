@@ -38,8 +38,6 @@ RETAIL_CLASSES: Set[str] = {
     # Food
     "bowl", "banana", "apple", "sandwich", "orange",
     "broccoli", "carrot", "hot dog", "pizza", "donut", "cake",
-    # Electronics / accessories
-    "cell phone", "remote", "keyboard", "mouse", "laptop",
     # Household / stationery
     "book", "clock", "scissors", "toothbrush", "vase",
     "handbag", "backpack", "umbrella", "tie",
@@ -49,6 +47,8 @@ RETAIL_CLASSES: Set[str] = {
 # Classes to always exclude
 EXCLUDED_CLASSES: Set[str] = {
     "person",
+    # Electronics (cause false detections from desk/person)
+    "cell phone", "remote", "keyboard", "mouse", "laptop",
     # Animals
     "bird", "cat", "dog", "horse", "sheep", "cow",
     "elephant", "bear", "zebra", "giraffe",

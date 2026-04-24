@@ -43,6 +43,8 @@ _MAX_THREAD_RESTARTS   = 5       # Max auto-restart attempts for crashed thread
 _THREAD_RESTART_DELAY  = 2.0     # Seconds to wait before restarting thread
 _DEFAULT_TARGET_FPS    = 12      # Target processing FPS to limit CPU/GPU load
 _MAX_READ_FAILURES     = 30      # Consecutive read failures before reconnect attempt
+_MIN_SHELF_DETECTIONS  = 2       # Minimum valid product detections to consider shelf visible
+_NO_SHELF_FRAMES       = 15      # Consecutive low-detection frames before NO_SHELF state
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -132,6 +134,8 @@ class ShelfCamera:
             "frozen_stock": None,         # Stock preserved when camera goes offline
             "frames_skipped_black": 0,    # Black/empty frames rejected
             "frames_skipped_mass_disappear": 0,  # Mass disappearance frames rejected
+            "no_shelf": False,                    # True when no shelf is visible
+            "no_shelf_counter": 0,                # Consecutive frames with too few detections
         }
 
     # ── Backend factory ────────────────────────────────────────────────
@@ -194,7 +198,7 @@ class ShelfCamera:
         """Refresh alerts, recommendations, and adapt snapshot interval."""
         stock = self.tracker.get_current_stock()
         rate  = self.tracker.get_sales_rate()
-        gnow  = self.tracker.get_live_grid() or []
+        gnow  = self.tracker.get_stable_grid() or []
         self.last_alerts = self.engine.check_alerts(stock, rate, gnow)
         self.last_recs   = self.engine.get_recommendations(stock, rate)
         # Adapt snapshot interval based on current sales activity
@@ -465,6 +469,29 @@ class ShelfCamera:
             # Update detection count baseline for mass disappearance check
             self.system_state["last_detection_count"] = current_det_count
 
+            # ── NO_SHELF DETECTION: Too few valid products → camera not on shelf ──
+            if current_det_count < _MIN_SHELF_DETECTIONS:
+                self.system_state["no_shelf_counter"] += 1
+                if self.system_state["no_shelf_counter"] >= _NO_SHELF_FRAMES:
+                    self.system_state["no_shelf"] = True
+                    # Still encode frame for display but do NOT update tracking
+                    annotated = draw_boxes(frame, shelf_dets)
+                    annotated = self.gmapper.draw_grid_overlay(annotated, None)
+                    _, jpg = cv2.imencode(".jpg", annotated, [cv2.IMWRITE_JPEG_QUALITY, 75])
+                    with self.lock:
+                        self.latest_jpg = jpg.tobytes()
+                    self.frame_count += 1
+                    elapsed = time.time() - loop_start
+                    if elapsed < frame_interval:
+                        time.sleep(frame_interval - elapsed)
+                    continue
+            else:
+                # Valid detections found — reset no-shelf state
+                if self.system_state["no_shelf"]:
+                    self._log("✅ Shelf detected again — resuming tracking")
+                self.system_state["no_shelf"] = False
+                self.system_state["no_shelf_counter"] = 0
+
             # ── EDGE CASE #2: Stabilization after reconnect ──
             # During stabilization, we accept frames into the buffer
             # but do NOT compare snapshots (no sales detection).
@@ -477,8 +504,8 @@ class ShelfCamera:
                     self._log(f"✅ Stabilization complete after {_STABILIZATION_FRAMES} frames")
 
             # ── Core pipeline: grid mapping → tracking → snapshots ──
-            counted_grid  = self.gmapper.map_detections_counted(shelf_dets)
-            accepted      = self.tracker.add_frame(counted_grid)
+            grid_map      = self.gmapper.map_detections(shelf_dets)
+            accepted      = self.tracker.add_frame(grid_map)
 
             if self.tracker.should_take_snapshot():
                 snap = self.tracker.take_snapshot()
@@ -490,7 +517,10 @@ class ShelfCamera:
 
             # ── Encode annotated frame for WebSocket streaming ──
             annotated = draw_boxes(frame, shelf_dets)
-            annotated = self.gmapper.draw_grid_overlay(annotated, counted_grid)
+            # Use confirmed grid (Layer 2) for the visual overlay
+            # — most stable consensus, eliminates flicker completely
+            display_grid = self.tracker.get_confirmed_grid()
+            annotated = self.gmapper.draw_grid_overlay(annotated, display_grid)
             _, jpg = cv2.imencode(
                 ".jpg", annotated, [cv2.IMWRITE_JPEG_QUALITY, 75]
             )
@@ -574,7 +604,7 @@ class ShelfCamera:
     def get_state(self) -> dict:
         stock     = self.tracker.get_current_stock()
         rate      = self.tracker.get_sales_rate()
-        live_grid = self.tracker.get_live_grid()
+        live_grid = self.tracker.get_confirmed_grid() # Use confirmed (Layer 2) for flicker-free UI
         history   = self.tracker.get_stock_history()
         thr       = self.stock_threshold
 
@@ -624,6 +654,14 @@ class ShelfCamera:
                 item="CAMERA", severity="critical",
                 stock=0, rate=0,
                 action="Camera offline — using frozen state",
+                time_to_empty="N/A",
+            ))
+        # ── NO_SHELF: Camera not pointing at a shelf ──
+        if self.system_state.get("no_shelf"):
+            alerts_out.append(dict(
+                item="SYSTEM", severity="critical",
+                stock=0, rate=0,
+                action="No shelf detected — adjust camera position",
                 time_to_empty="N/A",
             ))
         if self.system_state["stabilizing"]:

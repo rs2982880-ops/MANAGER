@@ -1,9 +1,9 @@
 /**
  * GridOverlay.jsx — SVG-based grid overlay on the video feed.
  *
- * Draws grid lines and highlights cells:
- *   - Green = occupied (product detected)
- *   - Red   = empty (no product)
+ * Draws thin grid lines and subtle cell highlights:
+ *   - Green tint = occupied (product detected)
+ *   - Transparent = empty (no distracting red fill)
  *   - Labels on occupied cells
  *
  * Positioned absolutely on top of the video <img>.
@@ -23,7 +23,7 @@ export default function GridOverlay({ grid, rows, cols }) {
       viewBox="0 0 100 100"
       preserveAspectRatio="none"
     >
-      {/* Grid lines */}
+      {/* Grid lines — thin, low opacity */}
       {Array.from({ length: rows + 1 }, (_, i) => (
         <line
           key={`h-${i}`}
@@ -31,8 +31,8 @@ export default function GridOverlay({ grid, rows, cols }) {
           y1={i * cellH}
           x2="100"
           y2={i * cellH}
-          stroke="rgba(255,255,255,0.15)"
-          strokeWidth="0.15"
+          stroke="rgba(255,255,255,0.08)"
+          strokeWidth="0.1"
         />
       ))}
       {Array.from({ length: cols + 1 }, (_, j) => (
@@ -42,13 +42,13 @@ export default function GridOverlay({ grid, rows, cols }) {
           y1="0"
           x2={j * cellW}
           y2="100"
-          stroke="rgba(255,255,255,0.15)"
-          strokeWidth="0.15"
+          stroke="rgba(255,255,255,0.08)"
+          strokeWidth="0.1"
         />
       ))}
 
-      {/* Cell highlights */}
-      {grid.map((cell, idx) => {
+      {/* Cell highlights — only occupied cells get a subtle tint */}
+      {grid.map((cell) => {
         const r = cell.row;
         const c = cell.col;
         const x = c * cellW;
@@ -56,17 +56,15 @@ export default function GridOverlay({ grid, rows, cols }) {
         const isOccupied = cell.product !== 'empty';
         const isLow = cell.state === 'low';
 
-        const fillColor = isOccupied
-          ? isLow
-            ? 'rgba(245, 158, 11, 0.15)'
-            : 'rgba(16, 185, 129, 0.12)'
-          : 'rgba(239, 68, 68, 0.12)';
+        if (!isOccupied) return null; // No fill on empty cells
 
-        const borderColor = isOccupied
-          ? isLow
-            ? 'rgba(245, 158, 11, 0.4)'
-            : 'rgba(16, 185, 129, 0.35)'
-          : 'rgba(239, 68, 68, 0.3)';
+        const fillColor = isLow
+          ? 'rgba(245, 158, 11, 0.10)'
+          : 'rgba(16, 185, 129, 0.08)';
+
+        const borderColor = isLow
+          ? 'rgba(245, 158, 11, 0.25)'
+          : 'rgba(16, 185, 129, 0.20)';
 
         return (
           <g key={`cell-${r}-${c}`}>
@@ -77,35 +75,21 @@ export default function GridOverlay({ grid, rows, cols }) {
               height={cellH - 0.4}
               fill={fillColor}
               stroke={borderColor}
-              strokeWidth="0.15"
+              strokeWidth="0.1"
               rx="0.3"
             />
-            {isOccupied && (
-              <text
-                x={x + cellW / 2}
-                y={y + cellH / 2 + 1}
-                textAnchor="middle"
-                fill="white"
-                fontSize="2"
-                fontWeight="600"
-                fontFamily="Inter, sans-serif"
-                style={{ paintOrder: 'stroke', stroke: 'rgba(0,0,0,0.6)', strokeWidth: '0.4px' }}
-              >
-                {cell.product.length > 8 ? cell.product.slice(0, 8) + '…' : cell.product}
-              </text>
-            )}
-            {!isOccupied && (
-              <text
-                x={x + cellW / 2}
-                y={y + cellH / 2 + 1}
-                textAnchor="middle"
-                fill="rgba(239, 68, 68, 0.5)"
-                fontSize="2.5"
-                fontWeight="400"
-              >
-                ∅
-              </text>
-            )}
+            <text
+              x={x + cellW / 2}
+              y={y + cellH / 2 + 1}
+              textAnchor="middle"
+              fill="rgba(255,255,255,0.75)"
+              fontSize="1.8"
+              fontWeight="600"
+              fontFamily="Inter, sans-serif"
+              style={{ paintOrder: 'stroke', stroke: 'rgba(0,0,0,0.5)', strokeWidth: '0.3px' }}
+            >
+              {cell.product.length > 8 ? cell.product.slice(0, 8) + '…' : cell.product}
+            </text>
           </g>
         );
       })}
