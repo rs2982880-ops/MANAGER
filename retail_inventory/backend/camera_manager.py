@@ -478,23 +478,20 @@ class ShelfCamera:
                     self.system_state["frozen_stock"] = None
                     self._log(f"✅ Stabilization complete after {_STABILIZATION_FRAMES} frames")
 
-            # ── Core pipeline: grid mapping → tracking → snapshots ──
+            # ── Core pipeline: grid mapping → continuous tracking ──
             grid_map      = self.gmapper.map_detections(shelf_dets)
             accepted      = self.tracker.add_frame(grid_map)
 
-            if self.tracker.should_take_snapshot():
-                snap = self.tracker.take_snapshot()
-                if snap:
-                    self.snapshot_count += 1
+            # Sync snapshot count from tracker (for WS dedup)
+            self.snapshot_count = self.tracker.snapshot_count
 
             self._refresh_insights()
             self.frame_count += 1
 
             # ── Encode annotated frame for WebSocket streaming ──
             annotated = draw_boxes(frame, shelf_dets)
-            # Use confirmed grid (Layer 2) for the visual overlay
-            # — most stable consensus, eliminates flicker completely
-            display_grid = self.tracker.get_confirmed_grid()
+            # Use stable grid (consensus) for the visual overlay
+            display_grid = self.tracker.get_stable_grid()
             annotated = self.gmapper.draw_grid_overlay(annotated, display_grid)
             _, jpg = cv2.imencode(
                 ".jpg", annotated, [cv2.IMWRITE_JPEG_QUALITY, 75]
@@ -579,7 +576,7 @@ class ShelfCamera:
     def get_state(self) -> dict:
         stock     = self.tracker.get_current_stock()
         rate      = self.tracker.get_sales_rate()
-        live_grid = self.tracker.get_confirmed_grid() # Use confirmed (Layer 2) for flicker-free UI
+        live_grid = self.tracker.get_stable_grid()
         history   = self.tracker.get_stock_history()
         thr       = self.stock_threshold
 
