@@ -130,12 +130,12 @@ export async function addDailySale(date, item, quantity, notes = '') {
   return res.json();
 }
 
-/** PUT /api/sales/daily/:id — Update an existing record */
-export async function updateDailySale(id, quantity, notes = '') {
+/** PUT /api/sales/daily/:id — Update with audit logging */
+export async function updateDailySale(id, quantity, notes = '', reason = '') {
   const res = await fetch(`${API_BASE}/api/sales/daily/${id}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ quantity, notes }),
+    body: JSON.stringify({ quantity, notes, reason }),
   });
   return res.json();
 }
@@ -148,7 +148,56 @@ export async function deleteDailySale(id) {
   return res.json();
 }
 
+/** GET /api/sales/audit — Fetch change history */
+export async function getAuditLog(days = 30, item = null) {
+  const params = new URLSearchParams({ days });
+  if (item) params.set('item', item);
+  const res = await fetch(`${API_BASE}/api/sales/audit?${params}`);
+  return res.json();
+}
+
+/** POST /api/sales/daily/:id/undo — Revert last change */
+export async function undoSaleChange(id) {
+  const res = await fetch(`${API_BASE}/api/sales/daily/${id}/undo`, {
+    method: 'POST',
+  });
+  return res.json();
+}
+
+/** POST /api/sales/lock/:date — Lock a day */
+export async function lockDay(date) {
+  const res = await fetch(`${API_BASE}/api/sales/lock/${date}`, {
+    method: 'POST',
+  });
+  return res.json();
+}
+
+/** DELETE /api/sales/lock/:date — Unlock a day */
+export async function unlockDay(date) {
+  const res = await fetch(`${API_BASE}/api/sales/lock/${date}`, {
+    method: 'DELETE',
+  });
+  return res.json();
+}
+
+/** GET /api/sales/locks — Get locked dates */
+export async function getLockedDays() {
+  const res = await fetch(`${API_BASE}/api/sales/locks`);
+  return res.json();
+}
+
+/** POST /api/sales/daily/bulk — Bulk update records */
+export async function bulkUpdateSales(updates, reason = 'Bulk update') {
+  const res = await fetch(`${API_BASE}/api/sales/daily/bulk`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ updates, reason }),
+  });
+  return res.json();
+}
+
 /**
  * WebSocket URL for real-time streaming
  */
 export const WS_URL = 'ws://localhost:8000/ws/stream';
+

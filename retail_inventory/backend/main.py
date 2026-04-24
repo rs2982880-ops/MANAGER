@@ -139,6 +139,18 @@ class DailySaleCreate(BaseModel):
 class DailySaleUpdate(BaseModel):
     quantity: int
     notes: str = ""
+    reason: str = ""
+
+
+class BulkUpdateItem(BaseModel):
+    id: int
+    quantity: int
+    notes: str = ""
+
+
+class BulkUpdateRequest(BaseModel):
+    updates: list[BulkUpdateItem]
+    reason: str = "Bulk update"
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -306,26 +318,86 @@ async def create_daily_sale(sale: DailySaleCreate):
 
 @app.put("/api/sales/daily/{sale_id}")
 async def update_daily_sale(sale_id: int, sale: DailySaleUpdate):
-    """Update an existing daily sale record."""
+    """Update a daily sale record with audit logging."""
     if sale.quantity < 0:
         return JSONResponse(content={"ok": False, "message": "Quantity must be >= 0"}, status_code=400)
     from database import Database
     db = Database()
-    ok = db.update_daily_sale(sale_id, sale.quantity, sale.notes)
-    if not ok:
-        return JSONResponse(content={"ok": False, "message": "Record not found"}, status_code=404)
-    return JSONResponse(content={"ok": True, "message": "Updated"})
+    result = db.update_daily_sale(sale_id, sale.quantity, sale.notes, sale.reason)
+    if not result.get("ok"):
+        code = 423 if "locked" in result.get("message", "").lower() else 400
+        return JSONResponse(content=result, status_code=code)
+    return JSONResponse(content=result)
 
 
 @app.delete("/api/sales/daily/{sale_id}")
 async def delete_daily_sale(sale_id: int):
-    """Delete a daily sale record."""
+    """Delete a daily sale record (respects day lock)."""
     from database import Database
     db = Database()
     ok = db.delete_daily_sale(sale_id)
     if not ok:
-        return JSONResponse(content={"ok": False, "message": "Record not found"}, status_code=404)
+        return JSONResponse(content={"ok": False, "message": "Record not found or day is locked"}, status_code=400)
     return JSONResponse(content={"ok": True, "message": "Deleted"})
+
+
+@app.get("/api/sales/audit")
+async def get_audit_log(days: int = 30, item: str = None):
+    """Fetch change history for all or a specific item."""
+    from database import Database
+    db = Database()
+    logs = db.get_audit_log(days, item)
+    return JSONResponse(content={"ok": True, "logs": logs})
+
+
+@app.post("/api/sales/daily/{sale_id}/undo")
+async def undo_sale_change(sale_id: int):
+    """Revert the most recent change to a daily sale record."""
+    from database import Database
+    db = Database()
+    result = db.undo_last_change(sale_id)
+    if not result.get("ok"):
+        return JSONResponse(content=result, status_code=400)
+    return JSONResponse(content=result)
+
+
+@app.post("/api/sales/lock/{date}")
+async def lock_day(date: str):
+    """Lock a day to prevent further edits."""
+    from database import Database
+    db = Database()
+    ok = db.lock_day(date)
+    return JSONResponse(content={"ok": ok, "message": f"Day {date} locked" if ok else "Failed"})
+
+
+@app.delete("/api/sales/lock/{date}")
+async def unlock_day(date: str):
+    """Unlock a day to allow edits."""
+    from database import Database
+    db = Database()
+    ok = db.unlock_day(date)
+    return JSONResponse(content={"ok": ok, "message": f"Day {date} unlocked" if ok else "Not found"})
+
+
+@app.get("/api/sales/locks")
+async def get_locked_days():
+    """Get all locked dates."""
+    from database import Database
+    db = Database()
+    dates = db.get_locked_days()
+    return JSONResponse(content={"ok": True, "dates": dates})
+
+
+@app.post("/api/sales/daily/bulk")
+async def bulk_update_sales(req: BulkUpdateRequest):
+    """Bulk update multiple daily sale records."""
+    from database import Database
+    db = Database()
+    result = db.bulk_update_daily_sales(
+        [{"id": u.id, "quantity": u.quantity, "notes": u.notes} for u in req.updates],
+        req.reason,
+    )
+    return JSONResponse(content=result)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
