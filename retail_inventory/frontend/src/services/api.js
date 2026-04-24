@@ -2,10 +2,15 @@
  * api.js — REST API client for the ShelfAI FastAPI backend.
  * 
  * All endpoints use fetch() (no external dependencies).
- * Base URL defaults to localhost:8000 (FastAPI dev server).
+ * Auto-detects the backend URL based on the current page origin.
+ * Works with localhost, ngrok, and any deployment URL.
  */
 
-const API_BASE = 'http://localhost:8000';
+// Auto-detect API base: use relative path when served from the same origin (production build),
+// fall back to localhost:8000 only during Vite dev server (port 5173/5174).
+const DEV_PORTS = ['5173', '5174', '3000'];
+const isDev = DEV_PORTS.includes(window.location.port);
+const API_BASE = isDev ? 'http://localhost:8000' : '';
 
 /**
  * POST /api/start-camera
@@ -197,7 +202,10 @@ export async function bulkUpdateSales(updates, reason = 'Bulk update') {
 }
 
 /**
- * WebSocket URL for real-time streaming
+ * WebSocket URL for real-time streaming.
+ * Auto-detects protocol (ws/wss) and host.
  */
-export const WS_URL = 'ws://localhost:8000/ws/stream';
+const wsProto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+const wsHost = isDev ? 'localhost:8000' : window.location.host;
+export const WS_URL = `${wsProto}//${wsHost}/ws/stream`;
 

@@ -81,16 +81,10 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# CORS for React dev server
+# CORS — Allow all origins for ngrok / deployment access
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5173",
-        "http://localhost:5174",
-        "http://localhost:3000",
-        "http://127.0.0.1:5173",
-        "http://127.0.0.1:5174",
-    ],
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -159,8 +153,17 @@ class BulkUpdateRequest(BaseModel):
 # REST API ENDPOINTS
 # ═══════════════════════════════════════════════════════════════════════════
 
+@app.get("/api/info")
+async def api_info():
+    return {"name": "ShelfAI", "version": "3.0.0", "status": "running"}
+
+
 @app.get("/")
 async def root():
+    """Serve frontend if built, otherwise return API info."""
+    _dist = Path(__file__).resolve().parent.parent / "frontend" / "dist" / "index.html"
+    if _dist.is_file():
+        return FileResponse(str(_dist))
     return {"name": "ShelfAI", "version": "3.0.0", "status": "running"}
 
 

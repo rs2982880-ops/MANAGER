@@ -118,60 +118,50 @@ If multiple detections map to the same cell, the one with the **highest confiden
 
 ---
 
-### 3. `tracker.py` — Snapshot Tracker, Occlusion Guard, Sales Detection
+### 3. `tracker.py` — Snapshot Tracker, Multi-Layer Stabilization, Sales Detection
 
-This is the most complex and important module. It solves three hard problems:
+This is the most complex and important module. It uses a **Two-Stage Consensus Pipeline** to eliminate noise, flicker, and false sales:
 
-#### Problem 1: False Sales from Occlusion
-If a person walks in front of the camera and temporarily blocks products, a naive count-difference system would think items were sold.
-
-**Solution: Rolling Frame Buffer + Majority Voting**
-
-Every incoming grid is added to a **rolling buffer** of the last N frames (default N=5).
-
-When a snapshot is taken, instead of using the latest single frame, the tracker does a **majority vote** across all N buffer frames:
+#### 🛡️ Layer 1: Frame Buffer & Majority Voting
+Every incoming grid is added to a **rolling frame buffer** (default size 5). Instead of using the latest single frame, the system performs a **majority vote** across all frames in the buffer:
 
 ```
-Cell (0,0) across 5 frames: ["bottle","bottle","empty","bottle","bottle"]
-Majority vote result:  "bottle"   ← single empty frame is overridden
+Cell (0,0) over 5 frames: ["bottle", "bottle", "empty", "bottle", "bottle"]
+Majority vote result: "bottle"  (4 ≥ 3) ← Momentary flicker is ignored.
 ```
+This produces a **Stable Grid** that filters out transient occlusions and detection jitter.
 
-This means a brief occlusion (person's hand, shopping cart) does not register as a sale.
+#### 🛡️ Layer 2: Decision Buffer & Consensus
+To prevent reactive spikes, the Stable Grids are pushed into a **Decision Buffer** (default size 3). A change is only confirmed if it persists across a majority of the decision buffer.
 
-#### Problem 2: Sudden Total Occlusion (Camera Blocked)
-If someone stands directly in front of the camera, the entire grid becomes empty.
-
-**Solution: Occlusion Drop Guard**
-
-Before adding a frame to the buffer, the system checks:
 ```
-occupied_cells_this_frame / rolling_average_occupied < 50%
+Stable Grids in buffer: [Grid_A, Grid_B, Grid_A]
+Consensus result: Grid_A (2 ≥ 2) ← Temporary fluctuations are rejected.
 ```
-If this is true → the frame is **discarded** and a log entry is written: `[OCCLUDED—skipped]`.
+This produces a **Confirmed Grid** used for official inventory updates.
 
-This catches catastrophic occlusion where majority voting alone would not be enough.
+#### 🛡️ Post-Processing & Validation
+Before a sale is confirmed, the system applies three additional safety checks:
+1. **Cell Cooldowns**: Once a sale is detected in a cell, that specific position is locked for 15–20 seconds to prevent double-counting or "bouncing" sales.
+2. **Visibility Validation**: If the ratio of (detected items / expected items) drops below 60%, the entire update is rejected (assumes catastrophic occlusion).
+3. **Change Threshold**: Global inventory changes of less than 2 items are ignored unless they persist, filtering out low-level sensor noise.
 
-#### Problem 3: False Sales from Rearrangement
-If a stock worker moves a bottle from shelf position (0,0) to (0,2), a naive position-diff system would count one sale (bottle disappeared from (0,0)) and one restock (bottle appeared at (0,2)).
+#### Problem: False Sales from Rearrangement
+If a stock worker moves a bottle from shelf position (0,0) to (0,2), a naive position-diff system would count one sale and one restock.
 
 **Solution: Count-Capped Movement-Aware Diff (`detect_sales()`)**
-
 For each item class, the algorithm computes:
 ```
 sale_cap = old_count(item) - new_count(item)
 ```
-
 - If `sale_cap ≤ 0` → the item's global count did **not decrease**. Any cell transitions from `item → empty` are **rearrangements**, not sales. Skip.
-- If `sale_cap > 0` → the item count actually decreased. Scan cells where `old[r][c] == item` and `new[r][c] == "empty"` and confirm up to `sale_cap` sales.
-
-**In the rearrangement example:**
-- old_count(bottle) = 3, new_count(bottle) = 3 → cap = 0 → **no sale recorded**. ✅
+- If `sale_cap > 0` → confirm sales up to `sale_cap`, but only if no identical item appeared in an **adjacent cell** (radius=1).
 
 #### Snapshot Lifecycle
 ```
-add_frame(grid)       → add to buffer (with occlusion check)
-should_take_snapshot() → True if interval elapsed AND buffer has ≥ 3 frames
-take_snapshot()        → majority_vote() → Snapshot object → compare_snapshots()
+add_frame(grid)       → update frame buffer → build stable grid → update decision buffer
+should_take_snapshot() → True if interval elapsed AND buffers are sufficiently full
+take_snapshot()        → build confirmed grid → validate visibility → compare with cooldowns
 ```
 
 #### Sales Rate Calculation
