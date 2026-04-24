@@ -110,6 +110,44 @@ export async function setMode(mode) {
   return res.json();
 }
 
+// ═══════════════════════════════════════════════════════════════════════
+// Daily Sales Log — Human-corrected, editable sales layer
+// ═══════════════════════════════════════════════════════════════════════
+
+/** GET /api/sales/daily — Fetch daily sales log + summary */
+export async function getDailySales(days = 30) {
+  const res = await fetch(`${API_BASE}/api/sales/daily?days=${days}`);
+  return res.json();
+}
+
+/** POST /api/sales/daily — Add or update a daily sale record */
+export async function addDailySale(date, item, quantity, notes = '') {
+  const res = await fetch(`${API_BASE}/api/sales/daily`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ date, item, quantity, notes }),
+  });
+  return res.json();
+}
+
+/** PUT /api/sales/daily/:id — Update an existing record */
+export async function updateDailySale(id, quantity, notes = '') {
+  const res = await fetch(`${API_BASE}/api/sales/daily/${id}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ quantity, notes }),
+  });
+  return res.json();
+}
+
+/** DELETE /api/sales/daily/:id — Delete a record */
+export async function deleteDailySale(id) {
+  const res = await fetch(`${API_BASE}/api/sales/daily/${id}`, {
+    method: 'DELETE',
+  });
+  return res.json();
+}
+
 /**
  * WebSocket URL for real-time streaming
  */

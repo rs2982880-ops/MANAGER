@@ -129,6 +129,18 @@ class ModeRequest(BaseModel):
     mode: str  # "demo" or "production"
 
 
+class DailySaleCreate(BaseModel):
+    date: str
+    item: str
+    quantity: int
+    notes: str = ""
+
+
+class DailySaleUpdate(BaseModel):
+    quantity: int
+    notes: str = ""
+
+
 # ═══════════════════════════════════════════════════════════════════════════
 # REST API ENDPOINTS
 # ═══════════════════════════════════════════════════════════════════════════
@@ -261,6 +273,59 @@ async def get_history():
     """Get sales history from SQLite."""
     history = camera_service.get_history()
     return JSONResponse(content=history)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# DAILY SALES LOG — Human-corrected, editable sales layer
+# ═══════════════════════════════════════════════════════════════════════════
+
+@app.get("/api/sales/daily")
+async def get_daily_sales(days: int = 30):
+    """Fetch editable daily sales log + summary KPIs."""
+    from database import Database
+    db = Database()
+    return JSONResponse(content={
+        "ok": True,
+        "records": db.get_daily_sales_log(days),
+        "summary": db.get_daily_sales_summary(),
+    })
+
+
+@app.post("/api/sales/daily")
+async def create_daily_sale(sale: DailySaleCreate):
+    """Insert or update a daily sale record (upsert on date+item)."""
+    if not sale.item.strip():
+        return JSONResponse(content={"ok": False, "message": "Item name required"}, status_code=400)
+    if sale.quantity < 0:
+        return JSONResponse(content={"ok": False, "message": "Quantity must be >= 0"}, status_code=400)
+    from database import Database
+    db = Database()
+    row_id = db.upsert_daily_sale(sale.date, sale.item.strip(), sale.quantity, sale.notes)
+    return JSONResponse(content={"ok": True, "id": row_id, "message": "Saved"})
+
+
+@app.put("/api/sales/daily/{sale_id}")
+async def update_daily_sale(sale_id: int, sale: DailySaleUpdate):
+    """Update an existing daily sale record."""
+    if sale.quantity < 0:
+        return JSONResponse(content={"ok": False, "message": "Quantity must be >= 0"}, status_code=400)
+    from database import Database
+    db = Database()
+    ok = db.update_daily_sale(sale_id, sale.quantity, sale.notes)
+    if not ok:
+        return JSONResponse(content={"ok": False, "message": "Record not found"}, status_code=404)
+    return JSONResponse(content={"ok": True, "message": "Updated"})
+
+
+@app.delete("/api/sales/daily/{sale_id}")
+async def delete_daily_sale(sale_id: int):
+    """Delete a daily sale record."""
+    from database import Database
+    db = Database()
+    ok = db.delete_daily_sale(sale_id)
+    if not ok:
+        return JSONResponse(content={"ok": False, "message": "Record not found"}, status_code=404)
+    return JSONResponse(content={"ok": True, "message": "Deleted"})
 
 
 # ═══════════════════════════════════════════════════════════════════════════

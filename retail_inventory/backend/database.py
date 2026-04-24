@@ -50,6 +50,16 @@ class Database:
                     alert_type TEXT    NOT NULL,
                     message    TEXT    NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS daily_sales (
+                    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                    date       TEXT    NOT NULL,
+                    item_name  TEXT    NOT NULL,
+                    quantity   INTEGER NOT NULL DEFAULT 0,
+                    notes      TEXT    DEFAULT '',
+                    created_at TEXT    DEFAULT (datetime('now')),
+                    updated_at TEXT,
+                    UNIQUE(date, item_name)
+                );
             """)
 
     def _connect(self) -> sqlite3.Connection:
@@ -270,3 +280,97 @@ class Database:
                 "WHERE event_type = 'sale'"
             ).fetchone()
         return row[0] if row else 0
+
+    # ------------------------------------------------------------------
+    # Daily Sales Log — Human-corrected, editable sales layer
+    # ------------------------------------------------------------------
+
+    def upsert_daily_sale(
+        self, date: str, item_name: str, quantity: int, notes: str = ""
+    ) -> int:
+        """
+        Insert or update a daily sale record.
+        If (date, item_name) already exists, update quantity and notes.
+        Returns the row id.
+        """
+        with self._connect() as conn:
+            conn.execute("""
+                INSERT INTO daily_sales (date, item_name, quantity, notes, updated_at)
+                VALUES (?, ?, ?, ?, datetime('now'))
+                ON CONFLICT(date, item_name) DO UPDATE SET
+                    quantity   = excluded.quantity,
+                    notes      = excluded.notes,
+                    updated_at = datetime('now')
+            """, (date, item_name, quantity, notes))
+            row = conn.execute(
+                "SELECT id FROM daily_sales WHERE date = ? AND item_name = ?",
+                (date, item_name),
+            ).fetchone()
+        return row[0] if row else 0
+
+    def update_daily_sale(self, sale_id: int, quantity: int, notes: str = "") -> bool:
+        """Update an existing daily sale record by ID."""
+        with self._connect() as conn:
+            cur = conn.execute("""
+                UPDATE daily_sales
+                SET quantity = ?, notes = ?, updated_at = datetime('now')
+                WHERE id = ?
+            """, (quantity, notes, sale_id))
+        return cur.rowcount > 0
+
+    def delete_daily_sale(self, sale_id: int) -> bool:
+        """Delete a daily sale record by ID."""
+        with self._connect() as conn:
+            cur = conn.execute("DELETE FROM daily_sales WHERE id = ?", (sale_id,))
+        return cur.rowcount > 0
+
+    def get_daily_sales_log(self, days: int = 30) -> List[Dict]:
+        """
+        Fetch the daily sales log for the last N days.
+        Returns list of dicts sorted by date DESC, then item ASC.
+        """
+        with self._connect() as conn:
+            rows = conn.execute("""
+                SELECT id, date, item_name, quantity, notes, created_at, updated_at
+                FROM   daily_sales
+                WHERE  date >= DATE('now', ?)
+                ORDER BY date DESC, item_name ASC
+            """, (f"-{days} days",)).fetchall()
+        return [
+            {
+                "id": r[0], "date": r[1], "item": r[2],
+                "quantity": r[3], "notes": r[4] or "",
+                "created_at": r[5], "updated_at": r[6],
+            }
+            for r in rows
+        ]
+
+    def get_daily_sales_summary(self) -> Dict:
+        """Aggregated daily sales summary for KPI cards."""
+        with self._connect() as conn:
+            today = conn.execute("""
+                SELECT COALESCE(SUM(quantity), 0) FROM daily_sales
+                WHERE date = DATE('now')
+            """).fetchone()[0]
+
+            week = conn.execute("""
+                SELECT COALESCE(SUM(quantity), 0) FROM daily_sales
+                WHERE date >= DATE('now', '-7 days')
+            """).fetchone()[0]
+
+            month = conn.execute("""
+                SELECT COALESCE(SUM(quantity), 0) FROM daily_sales
+                WHERE date >= DATE('now', '-30 days')
+            """).fetchone()[0]
+
+            total = conn.execute("""
+                SELECT COALESCE(SUM(quantity), 0) FROM daily_sales
+            """).fetchone()[0]
+
+        return {
+            "today": today,
+            "week": week,
+            "month": month,
+            "total": total,
+        }
+

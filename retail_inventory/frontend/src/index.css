@@ -214,3 +214,29 @@ input[type="range"]::-webkit-slider-thumb:hover {
 .toggle-switch input:checked ~ .toggle-dot {
   @apply translate-x-4;
 }
+
+/* ═══════════════════════════════════════════════════════════════════
+   SALES TABLE ROW
+   ═══════════════════════════════════════════════════════════════════ */
+.sales-table-row {
+  animation: fadeSlideIn 0.3s ease-out both;
+}
+
+@keyframes fadeSlideIn {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   TABULAR NUMBERS
+   ═══════════════════════════════════════════════════════════════════ */
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
+
