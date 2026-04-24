@@ -36,8 +36,10 @@ from typing import Optional
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, FileResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
+from pathlib import Path
 
 from camera import CameraService
 
@@ -542,6 +544,27 @@ async def _handle_ws_command(cmd: dict):
 
     elif action == "snapshot":
         camera_service.take_snapshot()
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# STATIC FILES — Serve React frontend build
+# ═══════════════════════════════════════════════════════════════════════════
+
+_FRONTEND_DIST = Path(__file__).resolve().parent.parent / "frontend" / "dist"
+
+if _FRONTEND_DIST.is_dir():
+    # Serve static assets (JS, CSS, images)
+    app.mount("/assets", StaticFiles(directory=str(_FRONTEND_DIST / "assets")), name="assets")
+
+    # Catch-all: serve index.html for SPA routing
+    @app.get("/{path:path}")
+    async def serve_spa(path: str):
+        # Try to serve the exact file first
+        file = _FRONTEND_DIST / path
+        if file.is_file():
+            return FileResponse(str(file))
+        # Fallback to index.html for client-side routing
+        return FileResponse(str(_FRONTEND_DIST / "index.html"))
 
 
 # ═══════════════════════════════════════════════════════════════════════════
