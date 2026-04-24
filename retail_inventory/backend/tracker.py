@@ -96,13 +96,13 @@ def _is_true_displacement(
 
 def build_consensus(buffer: List[List[List[str]]]) -> List[List[str]]:
     """
-    Build stable grid from buffer using sticky majority voting.
+    Build stable grid from buffer using majority voting.
 
     For each cell, collect labels across all buffer frames.
-    A non-empty label wins if it appears >= ceil(N/2) times.
-    If no non-empty label reaches majority, use the overall most-common
-    label (including empty). This biases toward keeping detected items
-    rather than flickering to empty on brief YOLO misses.
+    The most common label wins if it appears >= ceil(N/2) times.
+    If no label reaches majority, fall back to most-common non-empty
+    label if it appears >= ceil(N/3) times (mild stickiness).
+    Otherwise the cell is "empty".
     """
     if not buffer:
         return []
@@ -110,27 +110,26 @@ def build_consensus(buffer: List[List[List[str]]]) -> List[List[str]]:
     rows = len(buffer[0])
     cols = len(buffer[0][0]) if rows else 0
     grid: List[List[str]] = [["empty"] * cols for _ in range(rows)]
-    threshold = math.ceil(len(buffer) / 2)
+    majority = math.ceil(len(buffer) / 2)
+    sticky_min = math.ceil(len(buffer) / 3)  # mild stickiness threshold
 
     for r in range(rows):
         for c in range(cols):
             labels = [b[r][c] for b in buffer]
             counts = Counter(labels)
-
-            # Check if any non-empty label reaches majority
-            non_empty = {k: v for k, v in counts.items() if k != "empty"}
-            if non_empty:
-                best_item, best_count = max(non_empty.items(), key=lambda x: x[1])
-                if best_count >= threshold:
-                    grid[r][c] = best_item
-                    continue
-
-            # Fallback: use overall most common (sticky — prefer non-empty on ties)
             most_common, count = counts.most_common(1)[0]
-            if most_common != "empty" and count >= 2:
+
+            if count >= majority:
+                # Clear majority — use it (even if "empty")
                 grid[r][c] = most_common
-            elif count >= threshold:
-                grid[r][c] = most_common
+            else:
+                # No majority — prefer non-empty if it has decent support
+                non_empty = {k: v for k, v in counts.items() if k != "empty"}
+                if non_empty:
+                    best_item, best_count = max(non_empty.items(), key=lambda x: x[1])
+                    if best_count >= sticky_min:
+                        grid[r][c] = best_item
+                # else stays "empty"
 
     return grid
 
@@ -295,7 +294,7 @@ class SnapshotTracker:
         decision_buffer_size: int = 5,
         cooldown_period: float = 15.0,
         visibility_threshold: float = 0.60,
-        min_change_threshold: int = 2,
+        min_change_threshold: int = 1,
     ):
         self.base_interval = snapshot_interval_seconds
         self.snapshot_interval = snapshot_interval_seconds
@@ -419,25 +418,29 @@ class SnapshotTracker:
         return False
 
     def take_snapshot(self) -> Optional[Snapshot]:
-        """Build confirmed grid, validate, detect sales."""
+        """Build confirmed grid, detect sales, persist."""
         if not self.decision_buffer:
             return None
 
         confirmed_grid = self.build_confirmed_grid()
-
-        if not self._validate_visibility(confirmed_grid):
+        if not confirmed_grid:
             return None
 
         new_counts = count_stock(confirmed_grid)
         new_total = sum(new_counts.values())
-        should_compare = abs(new_total - self._prev_stock_total) >= self.min_change_threshold
 
         self.previous_snapshot = self.current_snapshot
         self.current_snapshot = Snapshot(confirmed_grid)
         self.last_snapshot_time = datetime.now()
 
-        if self.previous_snapshot is not None and should_compare:
-            self._compare_snapshots()
+        # Compare with previous snapshot if one exists
+        if self.previous_snapshot is not None:
+            old_total = self.previous_snapshot.total_occupied()
+            if abs(new_total - old_total) >= self.min_change_threshold:
+                self._compare_snapshots()
+            else:
+                self.latest_sales = {}
+                self.latest_restocks = {}
         else:
             self.latest_sales = {}
             self.latest_restocks = {}

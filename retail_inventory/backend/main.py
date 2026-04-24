@@ -348,6 +348,7 @@ async def websocket_stream(websocket: WebSocket):
     """
     await websocket.accept()
     print("[ws] Client connected")
+    _last_logged_snapshot = 0  # Track snapshot count to avoid duplicate DB writes
 
     try:
         while True:
@@ -398,6 +399,17 @@ async def websocket_stream(websocket: WebSocket):
                     "system_state": state.get("system_state"),
                     "snapshot_info": state.get("snapshot_info"),
                 }
+
+                # ── Real-time sales persistence to SQLite ──
+                latest_sales = state.get("latest_sales", {})
+                snap_count = state.get("snapshot_count", 0)
+                if latest_sales and snap_count > _last_logged_snapshot:
+                    _last_logged_snapshot = snap_count
+                    try:
+                        camera_service._db.log_sales(latest_sales)
+                        print(f"[ws] Logged sales to DB: {latest_sales}")
+                    except Exception as e:
+                        print(f"[ws] DB log_sales error: {e}")
 
                 await websocket.send_text(json.dumps(payload))
             else:
