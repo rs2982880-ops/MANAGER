@@ -41,14 +41,20 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from pathlib import Path
 
-from camera import CameraService
+# Camera/AI import — optional for cloud deployment (no torch/YOLO needed)
+try:
+    from camera import CameraService
+    AI_AVAILABLE = True
+except ImportError:
+    AI_AVAILABLE = False
+    print("  [INFO] AI packages not found — running in dashboard-only mode")
 
 
 # ═══════════════════════════════════════════════════════════════════════════
 # LIFESPAN — Initialize camera service on startup
 # ═══════════════════════════════════════════════════════════════════════════
 
-camera_service: Optional[CameraService] = None
+camera_service: Optional["CameraService"] = None
 
 
 @asynccontextmanager
@@ -57,11 +63,14 @@ async def lifespan(app: FastAPI):
     print("\n" + "=" * 55)
     print("  [+]  ShelfAI FastAPI Backend Starting...")
     print("=" * 55)
-    camera_service = CameraService()
-    # Pre-load the YOLO model so first request is fast
-    camera_service.get_detector()
-    print("  [OK]  Backend ready -> http://localhost:8000")
-    print("  [WS]  WebSocket     -> ws://localhost:8000/ws/stream")
+    if AI_AVAILABLE:
+        camera_service = CameraService()
+        # Pre-load the YOLO model so first request is fast
+        camera_service.get_detector()
+        print("  [OK]  AI Engine loaded (camera ready)")
+    else:
+        print("  [OK]  Dashboard-only mode (no AI/camera)")
+    print("  [OK]  Backend ready")
     print("=" * 55 + "\n")
     yield
     # Shutdown
@@ -167,11 +176,15 @@ async def root():
     return {"name": "ShelfAI", "version": "3.0.0", "status": "running"}
 
 
+CLOUD_MSG = {"ok": False, "message": "AI/Camera not available in cloud mode. Run locally for full features."}
+
 # ── Camera Control ────────────────────────────────────────────────────────
 
 @app.post("/api/start-camera")
 async def start_camera(req: CameraStartRequest):
     """Start camera with device index (int) or IP URL (string)."""
+    if not camera_service:
+        return JSONResponse(content=CLOUD_MSG)
     source = req.source
     # Try to parse as int if it's a string digit
     if isinstance(source, str):
@@ -186,6 +199,8 @@ async def start_camera(req: CameraStartRequest):
 @app.post("/api/stop-camera")
 async def stop_camera():
     """Stop the active camera."""
+    if not camera_service:
+        return JSONResponse(content=CLOUD_MSG)
     result = camera_service.stop()
     return JSONResponse(content=result)
 
@@ -193,6 +208,8 @@ async def stop_camera():
 @app.get("/api/cameras/available")
 async def available_cameras():
     """Enumerate available device cameras."""
+    if not camera_service:
+        return {"ok": True, "cameras": []}
     cameras = camera_service.enumerate_cameras()
     return {"ok": True, "cameras": cameras}
 
@@ -202,6 +219,8 @@ async def available_cameras():
 @app.post("/api/set-mode")
 async def set_mode(req: ModeRequest):
     """Switch between demo and production mode."""
+    if not camera_service:
+        return JSONResponse(content=CLOUD_MSG)
     result = camera_service.set_mode(req.mode)
     return JSONResponse(content=result)
 
@@ -211,6 +230,8 @@ async def set_mode(req: ModeRequest):
 @app.get("/api/state")
 async def get_state():
     """Get full shelf state (stock, alerts, grid, etc.)."""
+    if not camera_service:
+        return JSONResponse(content={"status": "cloud", "running": False, "total_stock": 0, "detected_stock": 0, "total_sold": 0, "products": [], "grid": [], "grid_rows": 3, "grid_cols": 5, "alerts": [{"level": "info", "message": "Running in cloud/demo mode — camera not available"}], "recommendations": []})
     state = camera_service.get_state()
     return JSONResponse(content=state)
 
@@ -220,6 +241,8 @@ async def get_state():
 @app.get("/api/settings")
 async def get_settings():
     """Get current settings."""
+    if not camera_service:
+        return {"confidence": 0.6, "detection_on": False, "grid_rows": 3, "grid_cols": 5, "snap_interval": 5.0, "buffer_size": 3, "stock_threshold": 2}
     return {
         "confidence": camera_service.confidence,
         "detection_on": camera_service.detection_on,
@@ -234,6 +257,8 @@ async def get_settings():
 @app.post("/api/settings")
 async def update_settings(settings: SettingsUpdate):
     """Update detection / grid settings."""
+    if not camera_service:
+        return JSONResponse(content=CLOUD_MSG)
     update_dict = settings.model_dump(exclude_none=True)
     result = camera_service.update_settings(update_dict)
     return JSONResponse(content=result)
@@ -244,6 +269,8 @@ async def update_settings(settings: SettingsUpdate):
 @app.post("/api/resize")
 async def resize_grid(req: GridResize):
     """Change grid dimensions on the fly."""
+    if not camera_service:
+        return JSONResponse(content=CLOUD_MSG)
     result = camera_service.update_settings({
         "grid_rows": req.rows,
         "grid_cols": req.cols,
@@ -256,6 +283,8 @@ async def resize_grid(req: GridResize):
 @app.post("/api/snapshot")
 async def take_snapshot():
     """Force a snapshot save."""
+    if not camera_service:
+        return JSONResponse(content=CLOUD_MSG)
     result = camera_service.take_snapshot()
     return JSONResponse(content=result)
 
@@ -265,6 +294,8 @@ async def take_snapshot():
 @app.get("/api/status")
 async def get_status():
     """Camera health, thread state, and edge case diagnostics."""
+    if not camera_service:
+        return JSONResponse(content={"ok": True, "mode": "cloud", "ai_available": False})
     result = camera_service.get_system_status()
     return JSONResponse(content=result)
 
@@ -272,6 +303,8 @@ async def get_status():
 @app.get("/api/stock")
 async def get_stock():
     """Current stock levels (or frozen stock if camera offline)."""
+    if not camera_service:
+        return JSONResponse(content={"ok": True, "stock": {}, "message": "Cloud mode"})
     result = camera_service.get_stock()
     return JSONResponse(content=result)
 
@@ -279,6 +312,8 @@ async def get_stock():
 @app.get("/api/alerts")
 async def get_alerts():
     """Active alerts including system alerts (camera offline, etc)."""
+    if not camera_service:
+        return JSONResponse(content={"ok": True, "alerts": [{"level": "info", "message": "Cloud demo mode"}]})
     result = camera_service.get_alerts_list()
     return JSONResponse(content=result)
 
@@ -288,6 +323,10 @@ async def get_alerts():
 @app.get("/api/history")
 async def get_history():
     """Get sales history from SQLite."""
+    if not camera_service:
+        from database import Database
+        db = Database()
+        return JSONResponse(content={"ok": True, "history": db.get_sales_history()})
     history = camera_service.get_history()
     return JSONResponse(content=history)
 
@@ -425,6 +464,23 @@ async def websocket_stream(websocket: WebSocket):
     """
     await websocket.accept()
     print("[ws] Client connected")
+
+    # Cloud mode — send heartbeats only (no camera)
+    if not camera_service:
+        try:
+            while True:
+                heartbeat = {"type": "heartbeat", "status": "cloud", "running": False, "fps": 0,
+                             "total_stock": 0, "detected_stock": 0, "total_sold": 0, "products": [],
+                             "grid": [], "grid_rows": 3, "grid_cols": 5,
+                             "alerts": [{"level": "info", "message": "Cloud demo mode — camera not available"}],
+                             "recommendations": [], "frame_count": 0, "snapshot_count": 0,
+                             "confidence": 0.6, "detection_on": False}
+                await websocket.send_text(json.dumps(heartbeat))
+                await asyncio.sleep(2)
+        except WebSocketDisconnect:
+            print("[ws] Client disconnected (cloud mode)")
+        return
+
     _last_logged_snapshot = 0  # Track snapshot count to avoid duplicate DB writes
 
     try:
